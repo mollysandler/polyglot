@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Live Translator v2",
-  "version": "2.0.0",
+  "name": "Polyglot",
+  "version": "0.1.0",
   "description": "Real-time streaming translation of audio from any browser tab",
   "permissions": [
     "tabCapture",
@@ -12,8 +12,7 @@
     "scripting"
   ],
   "host_permissions": [
-    "http://localhost:8765/*",
-    "https://mollysandler--sports-translation-v2-streamingservice-web.modal.run/*"
+    "http://localhost:8765/*"
   ],
   "background": {
     "service_worker": "service-worker.js"
@@ -22,7 +21,7 @@
     "default_path": "sidepanel/sidepanel.html"
   },
   "action": {
-    "default_title": "Open Live Translator",
+    "default_title": "Open Polyglot",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

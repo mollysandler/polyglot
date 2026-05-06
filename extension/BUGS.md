@@ -1,6 +1,8 @@
-# Chrome Extension v2 — Bug Log
+# Bug Log (historical)
 
-Running log of bugs / smells found in the v2 extension. Each entry:
+> Engineering log from active development. 25 catalogued bugs, 33 proof tests, all resolved or explicitly punted. Kept here as a record of what was investigated and fixed; not a current TODO list.
+
+Each entry:
 - **ID** — stable reference (BUG-NNN)
 - **Severity** — HIGH (user-visible correctness), MED (edge/reliability), LOW (smell/cleanup)
 - **Location** — file:line where relevant
@@ -19,7 +21,7 @@ All 25 catalogued bugs have been addressed:
 
 ---
 
-## Verification status (run `npm test` in `chrome-extension-v2/` to reproduce)
+## Verification status (run `npm test` in `extension/` to reproduce)
 
 `tests/bug-proofs.test.js` contains 33 proof tests — each asserts the CURRENT (buggy) behavior. A passing proof test = the bug is real. When we fix a bug, we flip the assertion to express correct behavior (at which point the test goes red until the fix lands).
 
