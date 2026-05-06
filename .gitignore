@@ -1,0 +1,36 @@
+# Secrets
+.env
+.env.local
+*.env
+google_keys.json
+*-credentials.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Claude Code
+.claude/
+
+# Build/temp
+*.log
+temp_*.wav
+translated_*.wav
+pretrained_models/

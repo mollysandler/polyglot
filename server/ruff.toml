@@ -1,0 +1,4 @@
+exclude = ["old-interations/", ".venv/", "venv*/"]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]

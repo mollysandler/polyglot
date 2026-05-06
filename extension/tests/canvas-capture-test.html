@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Canvas Capture Method Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Courier New', monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { color: #00d4ff; margin-bottom: 8px; font-size: 22px; }
+  .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+
+  #video-info {
+    background: #16213e; border: 1px solid #0f3460; border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 20px; font-size: 13px; line-height: 1.6;
+  }
+  #video-info .label { color: #00d4ff; }
+
+  #video-container { margin-bottom: 20px; }
+  #test-video { max-width: 320px; border: 2px solid #0f3460; border-radius: 4px; }
+
+  .test-section {
+    background: #16213e; border: 1px solid #0f3460; border-radius: 6px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .test-header {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
+  }
+  .test-label { font-weight: bold; font-size: 14px; color: #e0e0e0; }
+  .test-desc { font-size: 12px; color: #888; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 11px; font-weight: bold; text-transform: uppercase;
+  }
+  .badge-pass { background: #064e3b; color: #34d399; }
+  .badge-fail { background: #7f1d1d; color: #fca5a5; }
+  .badge-wait { background: #44403c; color: #a8a29e; }
+  .badge-dom { background: #1e3a5f; color: #7dd3fc; font-size: 10px; }
+  .badge-nodom { background: #3b2f2f; color: #d4a574; font-size: 10px; }
+
+  .test-result {
+    font-size: 12px; color: #ccc; margin-top: 6px; word-break: break-all;
+  }
+  .canvas-preview {
+    margin-top: 8px; border: 1px solid #333; background: #000;
+    display: inline-block;
+  }
+  .canvas-preview canvas { display: block; }
+
+  #controls { margin-bottom: 16px; }
+  #controls button {
+    background: #0f3460; color: #00d4ff; border: 1px solid #00d4ff;
+    padding: 8px 16px; border-radius: 4px; cursor: pointer; font-family: inherit;
+    font-size: 13px; margin-right: 8px;
+  }
+  #controls button:hover { background: #1a4a7a; }
+
+  #yt-instructions {
+    background: #2d1b00; border: 1px solid #664400; border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 20px; font-size: 12px; line-height: 1.6;
+    color: #ffcc66;
+  }
+  #yt-instructions code {
+    background: #3a2200; padding: 1px 4px; border-radius: 2px; font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Canvas Capture Method Test</h1>
+<p class="subtitle">Tests whether drawImage(video) produces visible pixels under different canvas configurations.</p>
+
+<div id="yt-instructions">
+  <strong>YouTube test mode:</strong> To test against a YouTube video, open DevTools on a YouTube page and run:<br>
+  <code>let s=document.createElement('script'); s.src='URL_TO_THIS_FILE'; document.head.appendChild(s);</code><br>
+  Or paste the contents of <code>runAllTests()</code> into the console after setting <code>targetVideo</code> to the YT player element.<br>
+  When injected, this page auto-detects the first playing <code>&lt;video&gt;</code> on the page.
+</div>
+
+<div id="video-info">
+  <span class="label">Video source:</span> <span id="info-src">loading...</span><br>
+  <span class="label">Dimensions:</span> <span id="info-dims">--</span><br>
+  <span class="label">readyState:</span> <span id="info-ready">--</span><br>
+  <span class="label">currentTime:</span> <span id="info-time">--</span><br>
+  <span class="label">crossOrigin:</span> <span id="info-cors">--</span><br>
+  <span class="label">Mode:</span> <span id="info-mode">standalone</span>
+</div>
+
+<div id="video-container">
+  <!-- Video is created by script; only shown in standalone mode -->
+</div>
+
+<div id="controls">
+  <button id="btn-run">Run Tests Now</button>
+  <button id="btn-run-yt">Use YouTube Video</button>
+</div>
+
+<div id="test-results"></div>
+
+<!-- Fallback: programmatically generated video if remote URL fails -->
+<script>
+(function() {
+  "use strict";
+
+  // ---- State ----
+  let targetVideo = null;
+  let isInjectedMode = false;
+
+  // Detect if we are injected into another page (not standalone)
+  if (window.location.hostname !== "" && !window.location.pathname.endsWith("canvas-capture-test.html")) {
+    isInjectedMode = true;
+  }
+
+  const READY_STATES = ["HAVE_NOTHING", "HAVE_METADATA", "HAVE_CURRENT_DATA", "HAVE_FUTURE_DATA", "HAVE_ENOUGH_DATA"];
+
+  // ---- Test method definitions ----
+  const TEST_METHODS = [
+    {
+      id: "A",
+      name: "Off-DOM canvas",
+      desc: "document.createElement('canvas') - NOT appended to DOM",
+      inDom: false,
+      hidden: false,
+      offscreen: false,
+      useBitmap: false,
+    },
+    {
+      id: "B",
+      name: "In-DOM visible canvas",
+      desc: "Canvas appended to DOM, fully visible",
+      inDom: true,
+      hidden: false,
+      offscreen: false,
+      useBitmap: false,
+    },
+    {
+      id: "C",
+      name: "In-DOM hidden canvas",
+      desc: "Canvas appended to DOM with visibility:hidden",
+      inDom: true,
+      hidden: true,
+      offscreen: false,
+      useBitmap: false,
+    },
+    {
+      id: "D",
+      name: "In-DOM off-screen canvas",
+      desc: "Canvas appended to DOM with position:fixed; left:-9999px",
+      inDom: true,
+      hidden: false,
+      offscreen: true,
+      useBitmap: false,
+    },
+    {
+      id: "E",
+      name: "createImageBitmap",
+      desc: "createImageBitmap(video) then ctx.drawImage(bitmap, ...)",
+      inDom: true,
+      hidden: false,
+      offscreen: false,
+      useBitmap: true,
+    },
+    {
+      id: "F",
+      name: "Direct display canvas",
+      desc: "Visible in-DOM canvas, drawImage(video) directly, same as B but explicit",
+      inDom: true,
+      hidden: false,
+      offscreen: false,
+      useBitmap: false,
+    },
+  ];
+
+  // ---- Helpers ----
+  function updateVideoInfo(video) {
+    const el = (id) => document.getElementById(id);
+    if (!el("info-src")) return; // elements may not exist in injected mode
+    el("info-src").textContent = (video.src || video.currentSrc || "blob/stream").substring(0, 120);
+    el("info-dims").textContent = video.videoWidth + " x " + video.videoHeight;
+    el("info-ready").textContent = video.readyState + " (" + (READY_STATES[video.readyState] || "?") + ")";
+    el("info-time").textContent = video.currentTime.toFixed(2) + "s";
+    el("info-cors").textContent = video.crossOrigin || "(not set)";
+    el("info-mode").textContent = isInjectedMode ? "injected (foreign page)" : "standalone";
+  }
+
+  function sampleCenter(ctx, w, h) {
+    const cx = Math.floor(w / 2);
+    const cy = Math.floor(h / 2);
+    // Sample a 4x4 region around center
+    const size = 4;
+    const x0 = Math.max(0, cx - size / 2);
+    const y0 = Math.max(0, cy - size / 2);
+    const data = ctx.getImageData(x0, y0, size, size).data;
+
+    let totalR = 0, totalG = 0, totalB = 0, totalA = 0;
+    let nonZero = 0;
+    const pixelCount = size * size;
+
+    for (let i = 0; i < data.length; i += 4) {
+      totalR += data[i];
+      totalG += data[i + 1];
+      totalB += data[i + 2];
+      totalA += data[i + 3];
+      if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0 || data[i + 3] !== 0) {
+        nonZero++;
+      }
+    }
+
+    return {
+      avgR: Math.round(totalR / pixelCount),
+      avgG: Math.round(totalG / pixelCount),
+      avgB: Math.round(totalB / pixelCount),
+      avgA: Math.round(totalA / pixelCount),
+      nonZeroPixels: nonZero,
+      totalPixels: pixelCount,
+    };
+  }
+
+  function isPass(sample) {
+    // Pass if we have non-transparent, non-black pixels
+    return sample.nonZeroPixels > 0 && sample.avgA > 0;
+  }
+
+  // ---- Run a single test method ----
+  async function runTest(method, video) {
+    const w = video.videoWidth || 320;
+    const h = video.videoHeight || 240;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+
+    if (method.inDom) {
+      if (method.hidden) {
+        canvas.style.visibility = "hidden";
+        canvas.style.position = "absolute";
+        canvas.style.width = w / 2 + "px";
+        canvas.style.height = h / 2 + "px";
+      } else if (method.offscreen) {
+        canvas.style.position = "fixed";
+        canvas.style.left = "-9999px";
+        canvas.style.top = "-9999px";
+      }
+      document.body.appendChild(canvas);
+    }
+
+    const ctx = canvas.getContext("2d");
+    let error = null;
+
+    try {
+      if (method.useBitmap) {
+        const bmp = await createImageBitmap(video);
+        ctx.drawImage(bmp, 0, 0, w, h);
+        bmp.close();
+      } else {
+        ctx.drawImage(video, 0, 0, w, h);
+      }
+    } catch (e) {
+      error = e.message || String(e);
+    }
+
+    const sample = error ? null : sampleCenter(ctx, w, h);
+    const pass = sample ? isPass(sample) : false;
+
+    // Create a visible preview copy (always in DOM, small)
+    const preview = document.createElement("canvas");
+    preview.width = w;
+    preview.height = h;
+    preview.style.width = Math.min(w, 240) + "px";
+    preview.style.height = Math.round(h * Math.min(w, 240) / w) + "px";
+    const pctx = preview.getContext("2d");
+    if (!error) {
+      pctx.drawImage(canvas, 0, 0);
+    }
+
+    // Clean up in-DOM test canvases (except we keep them for observation if needed)
+    if (method.inDom && (method.hidden || method.offscreen)) {
+      canvas.remove();
+    }
+
+    return { method, pass, sample, error, previewCanvas: preview, testCanvas: canvas };
+  }
+
+  // ---- Render results ----
+  function renderResult(result) {
+    const section = document.createElement("div");
+    section.className = "test-section";
+
+    const header = document.createElement("div");
+    header.className = "test-header";
+
+    const label = document.createElement("span");
+    label.className = "test-label";
+    label.textContent = "Method " + result.method.id + ": " + result.method.name;
+
+    const badge = document.createElement("span");
+    badge.className = "badge " + (result.error ? "badge-fail" : result.pass ? "badge-pass" : "badge-fail");
+    badge.textContent = result.error ? "ERROR" : result.pass ? "PASS" : "FAIL";
+
+    const domBadge = document.createElement("span");
+    domBadge.className = "badge " + (result.method.inDom ? "badge-dom" : "badge-nodom");
+    domBadge.textContent = result.method.inDom ? "in-DOM" : "off-DOM";
+
+    header.appendChild(label);
+    header.appendChild(badge);
+    header.appendChild(domBadge);
+    section.appendChild(header);
+
+    const desc = document.createElement("div");
+    desc.className = "test-desc";
+    desc.textContent = result.method.desc;
+    section.appendChild(desc);
+
+    const resultText = document.createElement("div");
+    resultText.className = "test-result";
+    if (result.error) {
+      resultText.textContent = "Error: " + result.error;
+      resultText.style.color = "#fca5a5";
+    } else {
+      const s = result.sample;
+      resultText.textContent =
+        "pixels=(" + s.avgR + "," + s.avgG + "," + s.avgB + "," + s.avgA + ") " +
+        "nonZero=" + s.nonZeroPixels + "/" + s.totalPixels;
+    }
+    section.appendChild(resultText);
+
+    const previewWrap = document.createElement("div");
+    previewWrap.className = "canvas-preview";
+    previewWrap.appendChild(result.previewCanvas);
+    section.appendChild(previewWrap);
+
+    return section;
+  }
+
+  // ---- Main test runner ----
+  async function runAllTests(video) {
+    if (!video) {
+      console.error("[canvas-capture-test] No video element provided");
+      return;
+    }
+
+    updateVideoInfo(video);
+
+    const container = document.getElementById("test-results");
+    if (container) container.innerHTML = "";
+
+    const results = [];
+    for (const method of TEST_METHODS) {
+      const result = await runTest(method, video);
+      results.push(result);
+      if (container) container.appendChild(renderResult(result));
+
+      // Log to console for injected mode
+      const status = result.error ? "ERROR" : result.pass ? "PASS" : "FAIL";
+      const detail = result.error
+        ? result.error
+        : "(" + result.sample.avgR + "," + result.sample.avgG + "," + result.sample.avgB + "," + result.sample.avgA + ")";
+      console.log("[canvas-capture-test] Method " + result.method.id + " (" + result.method.name + "): " + status + " " + detail);
+    }
+
+    // Summary
+    const passCount = results.filter(r => r.pass).length;
+    const failCount = results.filter(r => !r.pass).length;
+    console.log("[canvas-capture-test] Summary: " + passCount + " passed, " + failCount + " failed out of " + results.length);
+
+    return results;
+  }
+
+  // ---- Find YouTube or other video on the page ----
+  function findExistingVideo() {
+    const videos = Array.from(document.querySelectorAll("video"));
+    // Prefer playing video
+    const playing = videos.find(v => !v.paused && !v.ended && v.readyState >= 2);
+    if (playing) return playing;
+    // Fallback: largest by area
+    let best = null;
+    let bestArea = 0;
+    for (const v of videos) {
+      const area = (v.videoWidth || 0) * (v.videoHeight || 0);
+      if (area > bestArea) {
+        bestArea = area;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  // ---- Create standalone test video ----
+  function createTestVideo() {
+    return new Promise((resolve) => {
+      const video = document.createElement("video");
+      video.id = "test-video";
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.playsInline = true;
+      video.autoplay = true;
+      video.controls = true;
+
+      const container = document.getElementById("video-container");
+
+      // Try remote URL first
+      video.src = "https://www.w3schools.com/html/mov_bbb.mp4";
+
+      let resolved = false;
+
+      function onReady() {
+        if (resolved) return;
+        resolved = true;
+        if (container) container.appendChild(video);
+        resolve(video);
+      }
+
+      video.addEventListener("playing", onReady);
+      video.addEventListener("canplay", function() {
+        video.play().then(onReady).catch(() => {});
+      });
+
+      // Fallback: generate video from canvas if remote fails
+      video.addEventListener("error", function() {
+        if (resolved) return;
+        console.log("[canvas-capture-test] Remote video failed, generating synthetic video...");
+        generateSyntheticVideo(function(blob) {
+          video.src = URL.createObjectURL(blob);
+          video.play().then(onReady).catch(() => {});
+        });
+      });
+
+      // Timeout fallback
+      setTimeout(function() {
+        if (!resolved) {
+          console.log("[canvas-capture-test] Video load timeout, generating synthetic video...");
+          generateSyntheticVideo(function(blob) {
+            if (resolved) return;
+            video.src = URL.createObjectURL(blob);
+            video.play().then(onReady).catch(() => {});
+          });
+        }
+      }, 5000);
+    });
+  }
+
+  // ---- Generate a synthetic video from canvas frames ----
+  function generateSyntheticVideo(callback) {
+    const c = document.createElement("canvas");
+    c.width = 320;
+    c.height = 240;
+    const ctx = c.getContext("2d");
+    const stream = c.captureStream(30);
+
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+    } catch (e1) {
+      try {
+        recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      } catch (e2) {
+        recorder = new MediaRecorder(stream);
+      }
+    }
+
+    const chunks = [];
+    recorder.ondataavailable = function(e) { if (e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = function() { callback(new Blob(chunks, { type: recorder.mimeType })); };
+    recorder.start();
+
+    const colors = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff"];
+    let frame = 0;
+    const totalFrames = 90; // ~3 seconds at 30fps
+
+    function drawFrame() {
+      const colorIdx = Math.floor(frame / 15) % colors.length;
+      ctx.fillStyle = colors[colorIdx];
+      ctx.fillRect(0, 0, 320, 240);
+
+      // Draw some distinctive patterns
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 24px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("TEST FRAME " + frame, 160, 120);
+
+      // Colored rectangles in corners
+      ctx.fillStyle = "#ff6600";
+      ctx.fillRect(10, 10, 40, 40);
+      ctx.fillStyle = "#0066ff";
+      ctx.fillRect(270, 10, 40, 40);
+      ctx.fillStyle = "#66ff00";
+      ctx.fillRect(10, 190, 40, 40);
+      ctx.fillStyle = "#ff0066";
+      ctx.fillRect(270, 190, 40, 40);
+
+      frame++;
+      if (frame < totalFrames) {
+        requestAnimationFrame(drawFrame);
+      } else {
+        recorder.stop();
+        stream.getTracks().forEach(t => t.stop());
+      }
+    }
+
+    drawFrame();
+  }
+
+  // ---- Initialize ----
+  function init() {
+    const btnRun = document.getElementById("btn-run");
+    const btnYt = document.getElementById("btn-run-yt");
+
+    if (btnRun) {
+      btnRun.addEventListener("click", async function() {
+        if (!targetVideo) {
+          targetVideo = await createTestVideo();
+        }
+        // Wait a tiny bit for a frame to render
+        await new Promise(r => setTimeout(r, 100));
+        runAllTests(targetVideo);
+      });
+    }
+
+    if (btnYt) {
+      btnYt.addEventListener("click", function() {
+        const found = findExistingVideo();
+        if (found) {
+          targetVideo = found;
+          updateVideoInfo(found);
+          runAllTests(found);
+        } else {
+          alert("No video element found on page. Navigate to a page with a playing video first.");
+        }
+      });
+    }
+
+    // Auto-run logic
+    if (isInjectedMode) {
+      // Injected into another page: find existing video and test
+      const found = findExistingVideo();
+      if (found) {
+        targetVideo = found;
+        console.log("[canvas-capture-test] Found existing video, running tests...");
+        runAllTests(found);
+      } else {
+        console.log("[canvas-capture-test] No video found. Call runAllTests(videoElement) manually.");
+      }
+    } else {
+      // Standalone: auto-create and test
+      createTestVideo().then(function(video) {
+        targetVideo = video;
+        // Give the video a moment to render a frame
+        setTimeout(function() {
+          runAllTests(video);
+        }, 300);
+      });
+    }
+  }
+
+  // Expose for console use
+  window.runAllTests = runAllTests;
+  window.findExistingVideo = findExistingVideo;
+  window.canvasCaptureTest = { runAllTests, findExistingVideo, TEST_METHODS };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+
+</body>
+</html>

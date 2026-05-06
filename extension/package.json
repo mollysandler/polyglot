@@ -1,0 +1,11 @@
+{
+  "name": "chrome-extension-v2",
+  "version": "2.0.0",
+  "description": "Real-time streaming translation Chrome extension",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
+  }
+}
