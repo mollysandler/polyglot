@@ -13,6 +13,7 @@ import numpy as np
 # is NOT available (e.g. running outside the full venv).
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _can_import(name: str) -> bool:
     """Check if a module can actually be imported (not just present as a stub)."""
     try:
@@ -28,24 +29,34 @@ if not _can_import("torch"):
 
     class _FakeTensor:
         """Minimal tensor stub for type hints and basic usage."""
+
         def __init__(self, *args, **kwargs):
             pass
+
         def shape(self):
             return (1, 16000)
+
         def squeeze(self, *a):
             return self
+
         def numpy(self):
             return np.zeros(16000, dtype=np.float32)
+
         def mean(self, *a, **k):
             return self
+
         def __getitem__(self, key):
             return self
+
         def to(self, *a, **k):
             return self
+
         def float(self):
             return self
+
         def detach(self):
             return self
+
         def cpu(self):
             return self
 
@@ -58,6 +69,7 @@ if not _can_import("torch"):
     class _FakeDevice:
         def __init__(self, *a, **k):
             pass
+
     _torch.device = _FakeDevice
 
     class _FakeMPS:
@@ -72,6 +84,7 @@ if not _can_import("torch"):
 
     class _FakeBackends:
         mps = _FakeMPS()
+
     _torch.backends = _FakeBackends()
     _torch.cuda = _FakeCUDA()
 
@@ -87,11 +100,14 @@ if not _can_import("torchaudio"):
     _torchaudio.load = lambda path: (None, 16000)
 
     _transforms = types.ModuleType("torchaudio.transforms")
+
     class _FakeResample:
         def __init__(self, *a, **k):
             pass
+
         def __call__(self, x):
             return x
+
     _transforms.Resample = _FakeResample
     _torchaudio.transforms = _transforms
 
@@ -120,9 +136,11 @@ if not _can_import("huggingface_hub"):
 # --- qwen_tts ---
 if not _can_import("qwen_tts"):
     _qwen = types.ModuleType("qwen_tts")
+
     class _FakeQwenModel:
         def __init__(self, *a, **k):
             pass
+
     _qwen.Qwen3TTSModel = _FakeQwenModel
     sys.modules["qwen_tts"] = _qwen
 
@@ -145,11 +163,13 @@ class SpeakerSegment:
 
 class SpeakerDiarizer:
     """Test stub. Real implementation lives in diarizer.py."""
+
     pass
 
 
 class SportsDiarizer(SpeakerDiarizer):
     """Test stub for SportsDiarizer."""
+
     pass
 
 
@@ -165,6 +185,7 @@ sys.modules.setdefault("diarizer", fake_diarizer)
 # Shared test helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def seg(speaker: str, start_ms: int, end_ms: int) -> SpeakerSegment:
     """Factory for SpeakerSegment with auto-computed sec fields."""
     return SpeakerSegment(
@@ -176,7 +197,9 @@ def seg(speaker: str, start_ms: int, end_ms: int) -> SpeakerSegment:
     )
 
 
-def make_wav_bytes(sr: int = 8000, seconds: float = 0.1, freq: float = 440.0, nch: int = 1) -> bytes:
+def make_wav_bytes(
+    sr: int = 8000, seconds: float = 0.1, freq: float = 440.0, nch: int = 1
+) -> bytes:
     """Generate a valid PCM-16 WAV file in memory."""
     n = int(sr * seconds)
     t = np.arange(n, dtype=np.float32) / sr
@@ -204,5 +227,10 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _disable_heavy_initialization(monkeypatch):
-    import main
-    monkeypatch.setattr(main.DynamicSpeakerTranslator, "_initialize_services", lambda self: None)
+    try:
+        import main
+    except ModuleNotFoundError:
+        return
+    monkeypatch.setattr(
+        main.DynamicSpeakerTranslator, "_initialize_services", lambda self: None
+    )
