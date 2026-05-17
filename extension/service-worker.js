@@ -237,8 +237,6 @@ async function handleStartCapture(sourceLang, targetLang, sourceMode) {
     targetTabId: activeTabId,
   });
 
-  // Mute the tab so the user only hears translated audio.
-  // Tab capture still receives audio even when the tab is muted.
   await chrome.tabs.update(activeTabId, { muted: true });
 
   sessionActive = true;
@@ -253,22 +251,18 @@ async function handleStartCapture(sourceLang, targetLang, sourceMode) {
 
 async function handleStopCapture() {
   sessionActive = false;
+  let micBufferedCount = 0;
   try {
-    await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
+    const resp = await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
+    if (resp && typeof resp.micBufferedCount === "number") {
+      micBufferedCount = resp.micBufferedCount;
+    }
   } catch (e) {}
   if (activeTabId) {
     chrome.tabs.update(activeTabId, { muted: false }).catch(() => {});
     sendToContentScript({ type: "VIDEO_CLEANUP" });
     activeTabId = null;
   }
-  // Ask offscreen whether there's a mic recording buffer waiting for replay.
-  // The side panel uses this to decide whether to show the "Play your audio?"
-  // prompt vs. resetting straight to idle.
-  let micBufferedCount = 0;
-  try {
-    const resp = await chrome.runtime.sendMessage({ type: "GET_MIC_BUFFER_STATUS" });
-    if (resp && typeof resp.count === "number") micBufferedCount = resp.count;
-  } catch (e) {}
   return { ok: true, micBufferedCount };
 }
 
@@ -306,14 +300,6 @@ function broadcastToExtension(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
-// Persist captions to chrome.storage.local with microtask coalescing:
-//   - a microtask flush collapses every caption that arrives in the same JS
-//     tick into a single storage write (BUG-019). Deepgram typically fires
-//     several caption fragments per second; many land in the same task, so
-//     this saves real I/O.
-//   - the write chain serializes writes so two flushes can't interleave a
-//     get() / set() and clobber each other.
-//   - CAPTION_FLUSH_DEBOUNCE_MS is exported as a constant for test discovery.
 const CAPTION_FLUSH_DEBOUNCE_MS = 0;
 let captionWriteChain = Promise.resolve();
 let pendingCaptionBatch = [];

@@ -170,7 +170,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     case "STOP_CAPTURE":
       stopCapture();
-      sendResponse({ ok: true });
+      sendResponse({ ok: true, micBufferedCount: micBufferedItems.length });
       break;
 
     case "PLAY_BUFFERED_MIC_AUDIO":
@@ -370,10 +370,6 @@ function stopCapture() {
   swKeepaliveInterval = null;
   fallbackTimer = null;
 
-  // If we're stopping a mic recording, anything still in decodedQueue
-  // (decoded but never scheduled) belongs in micBufferedItems so the
-  // user can replay it. The normal path runs scheduleBufferedAudio on
-  // every push, but stop can race with an in-flight decode.
   if (currentSourceMode === "mic" && !_playingBufferedMic && decodedQueue.length > 0) {
     for (const it of decodedQueue) micBufferedItems.push(it);
   }

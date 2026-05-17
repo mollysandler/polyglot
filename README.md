@@ -110,6 +110,14 @@ The pipeline needs ~5–10 s of headroom for ASR → translation → TTS, so you
 
 If you click Start at the exact live edge with nothing buffered, the captions panel will sit empty until enough audio plays through.
 
+## Microphone mode
+
+Polyglot has a second capture source: your own microphone. Useful when you want to *speak* in one language and have your words translated into another — e.g. talking to someone in person without a shared language, or producing a translated voice memo. The whole pipeline (ASR, diarization, translation, TTS) is the same; only the capture step changes.
+
+Switch to it by toggling **Microphone** at the top of the side panel before clicking **Start**. Chrome will prompt for microphone permission on first use. If the side panel can't surface the prompt (a known Chrome quirk in some installs), Polyglot opens a small helper window that has a cleaner surface for the prompt — grant permission there, close the window, and click Start again.
+
+**Mic mode is silent during recording.** You'll see live captions in the side panel but won't hear the translated dub in real time. Playing it back while you're still talking would create a feedback loop and make it hard to follow your own thread. The Start/Stop button reads **Done** in mic mode; clicking it ends recording and offers a **Play / Discard** prompt for the buffered translated audio.
+
 ## Optional: deploy your own Modal backend
 
 The local backend has zero hosting cost but only works while your laptop is running and reachable. If you'd rather have the backend live somewhere else — across devices, on a server, or just so you can close your laptop — you can deploy the same backend to your own [Modal](https://modal.com) account. Polyglot itself hosts nothing; you bring your own Modal account, your own API keys, and pay for your own usage. No other Polyglot user touches your deployment or quota.
