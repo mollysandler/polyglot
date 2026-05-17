@@ -23,20 +23,23 @@ const retryBtn = document.getElementById("retryBtn");
 const dismissBtn = document.getElementById("dismissBtn");
 const pauseResumeBtn = document.getElementById("pauseResumeBtn");
 const newVideoBtn = document.getElementById("newVideoBtn");
+const backendUrlEl = document.getElementById("backendUrl");
+const saveBackendBtn = document.getElementById("saveBackendBtn");
+const resetBackendBtn = document.getElementById("resetBackendBtn");
+const backendStatusEl = document.getElementById("backendStatus");
+
+const DEFAULT_BACKEND_URL = "ws://localhost:8765";
 
 let isCapturing = false;
 let isPaused = false;
-let playbackStarted = false; // suppress captions until audio is actually playing
+let playbackStarted = false; 
 let captions = [];
 let connectingStartTime = null;
 let connectingTimerInterval = null;
-
-// Don't auto-stop on panel open — the user may have navigated away and back
-
-// Load saved preferences
-chrome.storage.local.get(["sourceLang", "targetLang", "captionHistory"], (data) => {
+chrome.storage.local.get(["sourceLang", "targetLang", "captionHistory", "backendUrl"], (data) => {
   if (data.sourceLang) sourceLangEl.value = data.sourceLang;
   if (data.targetLang) targetLangEl.value = data.targetLang;
+  if (data.backendUrl) backendUrlEl.value = data.backendUrl;
   if (data.captionHistory && data.captionHistory.length > 0) {
     captions = data.captionHistory;
     renderCaptions();
@@ -50,7 +53,54 @@ targetLangEl.addEventListener("change", () => {
   chrome.storage.local.set({ targetLang: targetLangEl.value });
 });
 
-// -- Error display --
+function setBackendStatus(text, kind) {
+  backendStatusEl.textContent = text || "";
+  backendStatusEl.className = "settings-status" + (kind ? " " + kind : "");
+}
+function backendUrlToPermissionOrigin(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch (e) { return null; }
+  const host = parsed.hostname;
+  if (host === "localhost" || host === "127.0.0.1") return null;
+  const scheme = parsed.protocol === "wss:" ? "https:" : "http:";
+  return `${scheme}//${host}/*`;
+}
+
+saveBackendBtn.addEventListener("click", async () => {
+  const raw = backendUrlEl.value.trim();
+  if (!raw) {
+    await chrome.storage.local.remove("backendUrl");
+    setBackendStatus(`Cleared. Will use default ${DEFAULT_BACKEND_URL}.`, "ok");
+    return;
+  }
+  if (!/^wss?:\/\//.test(raw)) {
+    setBackendStatus("URL must start with ws:// or wss://", "error");
+    return;
+  }
+
+  const originPattern = backendUrlToPermissionOrigin(raw);
+  if (originPattern) {
+    try {
+      const granted = await chrome.permissions.request({ origins: [originPattern] });
+      if (!granted) {
+        setBackendStatus("Permission denied; URL not saved.", "error");
+        return;
+      }
+    } catch (err) {
+      setBackendStatus("Could not request permission: " + (err.message || err), "error");
+      return;
+    }
+  }
+
+  await chrome.storage.local.set({ backendUrl: raw });
+  setBackendStatus("Saved. Click Start Translating to use the new backend.", "ok");
+});
+
+resetBackendBtn.addEventListener("click", async () => {
+  backendUrlEl.value = "";
+  await chrome.storage.local.remove("backendUrl");
+  setBackendStatus(`Reset to default ${DEFAULT_BACKEND_URL}.`, "ok");
+});
 
 function showError(message) {
   errorMessage.textContent = message;
@@ -70,8 +120,6 @@ retryBtn.addEventListener("click", () => {
 dismissBtn.addEventListener("click", () => {
   hideError();
 });
-
-// -- Connecting timer --
 
 function startConnectingTimer() {
   stopConnectingTimer();
@@ -103,11 +151,6 @@ function stopConnectingTimer() {
   elapsedTimer.textContent = "";
 }
 
-// Single source of truth for "session is over, return UI to idle". Every
-// teardown path (manual stop, connect timeout, server error, capture error,
-// auto-stop on tab switch) goes through here so we can't leave half-state
-// (e.g. pause button visible after a failed restart). Does NOT touch the
-// error banner — callers decide whether to show/hide it.
 function resetUIToIdle() {
   isCapturing = false;
   isPaused = false;
@@ -134,8 +177,6 @@ function resetUIToIdle() {
   setStatus("idle");
 }
 
-// -- Start / Stop --
-
 startStopBtn.addEventListener("click", () => {
   if (isCapturing) {
     stopCapture();
@@ -143,8 +184,6 @@ startStopBtn.addEventListener("click", () => {
     startCapture();
   }
 });
-
-// -- Pause / Resume --
 
 pauseResumeBtn.addEventListener("click", () => {
   if (isPaused) {
@@ -156,8 +195,6 @@ pauseResumeBtn.addEventListener("click", () => {
   }
 });
 
-// -- New Video (reset + restart) --
-
 newVideoBtn.addEventListener("click", () => resetAndRestart({ alreadyStopped: false }));
 
 async function resetAndRestart({ alreadyStopped }) {
@@ -166,27 +203,19 @@ async function resetAndRestart({ alreadyStopped }) {
     if (!alreadyStopped && isCapturing) {
       await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
     }
-    // Always clear capture state — in the alreadyStopped path the SW already
-    // tore down the session, but the sidepanel's flag was still true. Without
-    // this, a subsequent failed startCapture would leave isCapturing=true
-    // and the next button click would try to STOP a session that doesn't exist.
     isCapturing = false;
 
-    // Wipe captions — the SW also writes captionHistory, clear that too so
-    // the sidepanel doesn't reload the old list on next open.
     captions = [];
     captionsEl.innerHTML = "";
     captionsEl.appendChild(emptyState);
     emptyState.classList.remove("hidden");
     await chrome.storage.local.set({ captionHistory: [] });
 
-    // Reset transient UI state
     playbackStarted = false;
     silenceWarning.classList.add("hidden");
     pauseResumeBtn.classList.add("hidden");
     newVideoBtn.classList.add("hidden");
 
-    // Kick off a fresh capture
     await startCapture();
   } finally {
     newVideoBtn.disabled = false;
@@ -208,9 +237,6 @@ function setPauseUI(paused) {
 
 async function startCapture() {
   startStopBtn.disabled = true;
-  // Lock language selectors so users can't change them mid-stream — the
-  // change wouldn't take effect until the next Start, but the live UI made
-  // it look like it would (BUG-021).
   sourceLangEl.disabled = true;
   targetLangEl.disabled = true;
   silenceWarning.classList.add("hidden");
@@ -248,12 +274,10 @@ async function stopCapture() {
   try {
     await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
   } catch (err) {
-    // ignore
   }
   resetUIToIdle();
 }
 
-// -- Status --
 
 function setStatus(status) {
   const labels = {
@@ -267,13 +291,11 @@ function setStatus(status) {
   statusBadge.className = "status-badge " + status;
 }
 
-// -- Captions --
 
 function addCaption(caption) {
   const newText = (caption.translated || caption.text || "").trim();
   if (!newText) return;
 
-  // Dedup against recent captions
   const newWords = newText.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/);
   const recent = captions.slice(-10);
   if (recent.some((c) => {
@@ -294,8 +316,6 @@ function addCaption(caption) {
   captions.push(caption);
   if (captions.length > 200) captions = captions.slice(-200);
   renderCaptions();
-  // Storage is written by the service worker on CAPTION relay — don't
-  // double-write from here, it would race the SW's write chain.
 }
 
 function renderCaptions() {
@@ -346,41 +366,29 @@ function extractSpeakerIndex(speaker) {
 // -- Listen for messages --
 
 chrome.runtime.onMessage.addListener((message) => {
-  // Tab navigated to a new URL while capturing — SW already stopped the
-  // session. Auto-restart with fresh state so the user doesn't have to
-  // click Start again.
+
   if (message.type === "URL_CHANGED") {
     resetAndRestart({ alreadyStopped: true }).catch(() => {});
     return;
   }
-
-  // User activated a different tab — the captured stream is bound to the
-  // original tab, so we stop cleanly. We don't auto-restart: the new tab may
-  // not have a video, and silently capturing it would surprise the user.
   if (message.type === "TAB_SWITCHED") {
     resetUIToIdle();
     return;
   }
 
   if (message.type === "CAPTION") {
-    // Don't show captions until playback has started — during buffering
-    // the user sees the video but hears nothing, so captions are confusing.
     if (!playbackStarted) return;
     warmingUp.classList.add("hidden");
     stopConnectingTimer();
     setStatus("streaming");
     addCaption(message.caption);
   }
-
-  // HIDE_OVERLAY signals playback has begun (overlay is removed when audio starts)
   if (message.type === "HIDE_OVERLAY" || message.type === "VIDEO_SYNC_STATUS") {
     playbackStarted = true;
     if (isCapturing && !isPaused) {
       pauseResumeBtn.classList.remove("hidden");
     }
   }
-
-  // Video pause/resume initiated by the user clicking the video player
   if (message.type === "USER_PAUSED_VIDEO") {
     setPauseUI(true);
     pauseResumeBtn.classList.remove("hidden");
@@ -389,7 +397,6 @@ chrome.runtime.onMessage.addListener((message) => {
     setPauseUI(false);
   }
 
-  // Re-buffer for late-arriving speakers
   if (message.type === "REBUFFER_START") {
     setStatus("buffering");
   }

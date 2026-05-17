@@ -221,7 +221,6 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Speaker colors */
 .speaker-0 { border-left-color: #3b82f6; }
 .speaker-0 .speaker { color: #60a5fa; }
 .speaker-1 { border-left-color: #10b981; }
@@ -232,3 +231,98 @@ body {
 .speaker-3 .speaker { color: #f87171; }
 .speaker-4 { border-left-color: #8b5cf6; }
 .speaker-4 .speaker { color: #a78bfa; }
+
+.settings {
+  margin-top: 10px;
+  border-top: 1px solid #1f2937;
+  padding-top: 8px;
+}
+
+.settings > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #94a3b8;
+  user-select: none;
+  outline: none;
+  list-style: none;
+  padding: 2px 0;
+}
+
+.settings > summary::-webkit-details-marker { display: none; }
+.settings > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  font-size: 10px;
+  color: #64748b;
+  transition: transform 0.15s ease-out;
+}
+.settings[open] > summary::before { transform: rotate(90deg); }
+
+.settings > summary:hover { color: #cbd5e1; }
+
+.settings-body { margin-top: 8px; }
+
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.settings-row input {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  outline: none;
+}
+
+.settings-row input:focus { border-color: #3b82f6; }
+
+.settings-hint {
+  font-size: 11px;
+  color: #64748b;
+  margin: 6px 0 6px 0;
+  line-height: 1.4;
+}
+
+.settings-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #1e293b;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #cbd5e1;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.btn-save, .btn-reset {
+  background: #1e293b;
+  color: #cbd5e1;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-save:hover { background: #334155; border-color: #475569; }
+.btn-reset:hover { background: #334155; border-color: #475569; }
+
+.settings-status {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+.settings-status.ok    { color: #34d399; }
+.settings-status.error { color: #f87171; }

@@ -55,6 +55,33 @@
         <button id="pauseResumeBtn" class="btn btn-pause hidden">Pause</button>
         <button id="newVideoBtn" class="btn btn-new-video hidden" title="Reset speakers + captions and start fresh">New Video</button>
       </div>
+
+      <details class="settings">
+        <summary>Backend &amp; settings</summary>
+        <div class="settings-body">
+          <label class="settings-row">
+            <span>Backend URL</span>
+            <input
+              id="backendUrl"
+              type="text"
+              placeholder="ws://localhost:8765"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </label>
+          <p class="settings-hint">
+            Default is your local <code>uvicorn</code> backend.
+            To use your own Modal deployment, paste your Modal WebSocket URL
+            (e.g.&nbsp;<code>wss://&lt;you&gt;--polyglot-streamingservice-web.modal.run</code>).
+            Granting access for <code>*.modal.run</code> is requested once on save.
+          </p>
+          <div class="settings-actions">
+            <button id="saveBackendBtn" class="btn-save">Save</button>
+            <button id="resetBackendBtn" class="btn-reset" title="Restore default localhost backend">Reset</button>
+            <span id="backendStatus" class="settings-status"></span>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div class="error-banner hidden" id="errorBanner">

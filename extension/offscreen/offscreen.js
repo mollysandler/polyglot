@@ -17,7 +17,17 @@
 // Configuration
 // ---------------------------------------------------------------------------
 
-const WS_URL_BASE = "ws://localhost:8765";
+const DEFAULT_WS_URL_BASE = "ws://localhost:8765";
+
+async function _resolveBackendUrl() {
+  try {
+    const { backendUrl } = await chrome.storage.local.get("backendUrl");
+    if (typeof backendUrl === "string" && backendUrl.trim().startsWith("ws")) {
+      return backendUrl.trim().replace(/\/+$/, "");
+    }
+  } catch (e) { /* storage unavailable — fall through to default */ }
+  return DEFAULT_WS_URL_BASE;
+}
 
 const TARGET_BUFFER_SEC = 3;     // seconds of translated audio before playback (canvas mode needs less)
 const FALLBACK_START_SEC = 15;   // start playback regardless after this
@@ -31,7 +41,6 @@ const SILENCE_WARN_FRAMES = 50;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000];
 
-// Quiet by default in production. Set true to enable [offscreen] traces.
 const DEBUG = false;
 function dlog(...args) { if (DEBUG) dlog(...args); }
 
@@ -58,20 +67,14 @@ let silenceFrames = 0;
 
 let currentUtterance = null;
 let lastOriginalEndSec = 0;
-let translationOverrun = 0; // cumulative seconds that translated audio exceeds original duration
+let translationOverrun = 0; 
 
-// ---- Screen-vs-audio drift correction state ----
-// Translation expansion (e.g. EN→ES ~+30% length) makes audio's source
-// mediaTime advance at <1× wall-clock rate while the live <video> keeps
-// advancing at 1×. Without intervention the screen runs progressively ahead
-// of the audio. We measure the audio's source-coverage rate and ask the
-// content script to set the video's playbackRate to match.
-let _driftAnchorWall = 0;           // Date.now() at the first scheduled audio chunk
-let _driftAnchorSrcSec = 0;         // src_start_sec of that first chunk
-let _driftCurrentRate = 1.0;        // current playbackRate we've requested
+let _driftAnchorWall = 0;           
+let _driftAnchorSrcSec = 0;         
+let _driftCurrentRate = 1.0;        
 let _driftLastSendMs = 0;
-let _driftIntegratedVideoSrc = 0;   // cumulative source covered by video at requested rates
-let _driftIntegratedWall = 0;       // wall-ms checkpoint for the above integration
+let _driftIntegratedVideoSrc = 0;  
+let _driftIntegratedWall = 0;       
 const DRIFT_SETTLE_SEC = 4;
 const DRIFT_SEND_INTERVAL_MS = 1500;
 const DRIFT_MIN_CHANGE = 0.02;
@@ -80,11 +83,9 @@ const DRIFT_RATE_MAX = 1.15;
 const DRIFT_CLOSURE_WINDOW_SEC = 4;       // close existing drift over ~this many seconds
 const DRIFT_ACTIVE_CLOSURE_THRESHOLD = 0.3; // start closing when drift exceeds this (s)
 
-// Synchronous dedup (must fire before any await in finalizeUtterance)
 let seenUtteranceKeys = new Set();
 let highWaterEndSec = 0;
 
-// Pipeline latency measurement
 let firstFrameSentTime = 0;
 let firstUtteranceReceivedTime = 0;
 let measuredLatencySec = 0;
@@ -127,23 +128,14 @@ function capSyncMap(m) {
   while (m.size > SYNC_MAP_MAX) m.delete(m.keys().next().value);
 }
 
-// Seekback replay zone — suppress frames that are re-captured content.
-// After seekback, the video replays from 0 and the tab produces the same audio
-// again. We must NOT send this to the backend or it creates duplicate translations
-// and a silence gap that permanently desyncs audio and video.
-// Uses integer frame counting (not floating-point time) to avoid FP precision bugs.
-let capturedFrameCount = 0;  // total frames captured (always increments)
-let seekbackFrameMark = 0;   // capturedFrameCount at the moment of seekback
+let capturedFrameCount = 0;  
+let seekbackFrameMark = 0;  
 let inReplayZone = false;
 
-// Drift monitor — emits VIDEO_SYNC_STATUS every DRIFT_MONITOR_MS while playing
-// so the sidepanel can render a live sync badge. The interval is cleared on
-// stopCapture / pause to avoid the leaked-handle warning Jest flags.
+
 let driftMonitorInterval = null;
 let playbackStartMs = 0;
 
-// WebSocket reconnect state. Preserved across reconnects so the dedup sets
-// and playback state survive a network blip.
 let wsUrl = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
@@ -156,7 +148,6 @@ function sendToSW(msg) {
   try { chrome.runtime.sendMessage(msg).catch(() => {}); } catch (e) {}
 }
 
-/** Send a caption now or hold it if paused. */
 function sendCaption(caption) {
   if (isPaused) {
     heldCaptions.push(caption);
@@ -165,7 +156,6 @@ function sendCaption(caption) {
   }
 }
 
-/** Flush held captions (called on resume). */
 function flushHeldCaptions() {
   for (const cap of heldCaptions) {
     sendToSW({ type: "CAPTION", caption: cap });
@@ -233,9 +223,6 @@ function openWebSocket(url) {
     if (isReconnect) {
       dlog(`[offscreen] WebSocket reconnected (attempt ${reconnectAttempts})`);
       reconnectAttempts = 0;
-      // Session state (isPlaying, highWaterEndSec, seenUtteranceKeys) is
-      // intentionally preserved. Don't re-send SHOW_OVERLAY / START_SYNC —
-      // the user was already watching.
     } else {
       sendToSW({ type: "STATUS", status: "streaming" });
       sendToSW({ type: "SHOW_OVERLAY", text: "Buffering translation..." });
@@ -259,7 +246,6 @@ function openWebSocket(url) {
 
 function handleWSClose(event) {
   const code = event?.code;
-  // 1000 = clean close (intentional). No URL means we've already torn down.
   if (code === 1000 || !wsUrl) {
     stopCapture();
     return;
@@ -271,14 +257,12 @@ function handleWSClose(event) {
   }
   reconnectAttempts++;
   const scheduleReconnect = () => {
-    if (!wsUrl) return; // torn down in the meantime
+    if (!wsUrl) return; 
     ws = openWebSocket(wsUrl);
   };
   if (reconnectAttempts === 1) {
-    // First retry: microtask — recovers from blips immediately.
     Promise.resolve().then(scheduleReconnect);
   } else {
-    // Subsequent retries: backoff.
     const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttempts - 1, RECONNECT_DELAYS_MS.length - 1)];
     dlog(`[offscreen] WS closed — reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
     reconnectTimer = setTimeout(scheduleReconnect, delay);
@@ -310,7 +294,6 @@ async function startCapture(streamId, sourceLang, targetLang) {
   inReplayZone = false;
   syncMode = "canvas";
 
-  // 1. Get tab audio stream
   captureStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: {
@@ -320,7 +303,6 @@ async function startCapture(streamId, sourceLang, targetLang) {
     },
   });
 
-  // 2. AudioContext for capture + playback
   audioCtx = new AudioContext();
   playbackCtx = new AudioContext();
   const source = audioCtx.createMediaStreamSource(captureStream);
@@ -330,14 +312,13 @@ async function startCapture(streamId, sourceLang, targetLang) {
   workletNode.port.onmessage = (e) => {
     if (e.data.type === "frame") handleAudioFrame(e.data);
   };
-  source.connect(workletNode); // NOT to destination = mutes original
+  source.connect(workletNode); 
 
-  // 3. WebSocket to backend
-  wsUrl = `${WS_URL_BASE}/ws/translate?source=${sourceLang}&target=${targetLang}`;
+  const baseUrl = await _resolveBackendUrl();
+  wsUrl = `${baseUrl}/ws/translate?source=${sourceLang}&target=${targetLang}`;
   reconnectAttempts = 0;
   ws = openWebSocket(wsUrl);
 
-  // 4. Keepalives
   heartbeatInterval = setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "heartbeat" }));
@@ -345,15 +326,12 @@ async function startCapture(streamId, sourceLang, targetLang) {
   }, HEARTBEAT_MS);
   swKeepaliveInterval = setInterval(() => sendToSW({ type: "keepalive" }), SW_KEEPALIVE_MS);
 
-  // 5. Fallback timer
   fallbackTimer = setTimeout(() => {
     if (!isPlaying && decodedQueue.length > 0) startPlayback();
   }, FALLBACK_START_SEC * 1000);
 }
 
 function stopCapture() {
-  // Mark the session as torn down BEFORE closing the WS so handleWSClose
-  // (which will fire) takes the stopCapture branch instead of reconnecting.
   wsUrl = null;
   reconnectAttempts = 0;
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -405,23 +383,12 @@ async function handleAudioFrame(frame) {
   const frameDuration = frame.samples.length / frame.sampleRate;
   capturedFrameCount++;
 
-  // Seekback replay zone: the video is replaying already-translated content.
-  // Suppress frames so the backend doesn't produce duplicate translations.
-  //
-  // NOTE on BUG-010: this condition was originally flagged as "assumes 1×
-  // playback rate" but that turns out to be wrong — audio frames are
-  // produced at the audio sample rate (200ms of audio per frame regardless
-  // of video rate), so frame count tracks audio content, not wall-clock
-  // time. Doubling the seekback frame mark gives us exactly the duration of
-  // re-captured audio we need to suppress.
-  // totalAudioCapturedSec is NOT incremented during the replay zone because
-  // these frames are duplicate content that the backend never sees.
   if (inReplayZone) {
     if (capturedFrameCount >= seekbackFrameMark * 2) {
       inReplayZone = false;
       dlog("[offscreen] Replay zone ended — resuming capture to backend");
     }
-    return; // suppress ALL replay zone frames including the boundary
+    return;
   }
 
   totalAudioCapturedSec += frameDuration;
@@ -452,8 +419,7 @@ function resampleTo16kPCM16(samples, sourceSampleRate) {
   const targetRate = 16000;
   if (sourceSampleRate === targetRate) return float32ToPCM16(samples);
 
-  // Linear interpolation resampler — synchronous, no GC pressure from
-  // creating a new OfflineAudioContext for every 200ms frame (5/sec).
+
   const ratio = sourceSampleRate / targetRate;
   const outputLength = Math.ceil(samples.length / ratio);
   const output = new Float32Array(outputLength);
@@ -506,9 +472,7 @@ function handleTextMessage(data) {
         translated,
       };
 
-      // Sync caption with audio: delay delivery until the audio starts playing.
       if (!playbackCtx || data.seq === undefined) {
-        // No audio context or no seq — send immediately (fallback)
         sendCaption(caption);
       } else {
         const timing = scheduledAudioTimes.get(data.seq);
@@ -600,19 +564,14 @@ function trimSilence(audioBuffer, threshold = SILENCE_THRESHOLD) {
 async function finalizeUtterance(utterance, originalStartSec, originalEndSec) {
   if (utterance.chunks.length === 0) return;
 
-  // Measure pipeline latency on first utterance
   if (firstUtteranceReceivedTime === 0 && firstFrameSentTime > 0) {
     firstUtteranceReceivedTime = Date.now();
     measuredLatencySec = (firstUtteranceReceivedTime - firstFrameSentTime) / 1000;
     dlog(`[offscreen] Measured pipeline latency: ${measuredLatencySec.toFixed(1)}s`);
-    // Send to content script so canvas knows how much to delay
-    sendToSW({ type: "SET_DELAY", delaySec: measuredLatencySec });
+        sendToSW({ type: "SET_DELAY", delaySec: measuredLatencySec });
     latencySentToContent = true;
   }
 
-  // ---- SYNCHRONOUS dedup (must complete before any await) ----
-
-  // 1. Exact key match: same start+end = same Deepgram segment
   const dedupKey = `${originalStartSec.toFixed(3)}|${originalEndSec.toFixed(3)}`;
   if (seenUtteranceKeys.has(dedupKey)) {
     dlog(`[offscreen] Dedup: dropping duplicate seq=${utterance.seq} key=${dedupKey}`);
@@ -626,7 +585,6 @@ async function finalizeUtterance(utterance, originalStartSec, originalEndSec) {
     for (let i = 0; i < 100; i++) seenUtteranceKeys.delete(iter.next().value);
   }
 
-  // 2. Timestamp overlap: skip if this utterance's time range is already covered
   if (originalStartSec > 0 && originalStartSec < highWaterEndSec - 0.1) {
     dlog(
       `[offscreen] Dedup: skipping overlapping seq=${utterance.seq} ` +
@@ -636,10 +594,8 @@ async function finalizeUtterance(utterance, originalStartSec, originalEndSec) {
     scheduledAudioTimes.delete(utterance.seq);
     return;
   }
-  // Update high-water SYNCHRONOUSLY before the await
   if (originalEndSec > highWaterEndSec) highWaterEndSec = originalEndSec;
 
-  // ---- end synchronous dedup ----
 
   const totalSize = utterance.chunks.reduce((s, c) => s + c.byteLength, 0);
   const combined = new Uint8Array(totalSize);
@@ -667,7 +623,6 @@ async function finalizeUtterance(utterance, originalStartSec, originalEndSec) {
     } else if (!isPlaying && bufferedDurationSec >= TARGET_BUFFER_SEC) {
       startPlayback();
     }
-    // During rebuffer: decoded audio stays in decodedQueue, scheduled on resume
   } catch (e) {
     console.error("[offscreen] Failed to decode audio:", e);
   }
@@ -686,9 +641,6 @@ function startPlayback() {
 
   if (playbackCtx.state === "suspended") playbackCtx.resume();
   nextPlayTime = playbackCtx.currentTime + 0.1;
-
-  // Capture the first utterance's video position BEFORE draining the queue —
-  // the content script needs this to align the canvas to the same position.
   const audioStartSec = decodedQueue.length > 0 ? decodedQueue[0].originalStartSec : 0;
 
   scheduleBufferedAudio();
@@ -713,10 +665,6 @@ function startPlayback() {
   );
 }
 
-// Periodically emit VIDEO_SYNC_STATUS so the sidepanel can render a live
-// sync badge and so any future content-script driver has a poll loop to
-// hook into. Uses translated-audio buffer-ahead (decodedQueue duration)
-// as the proxy for sync health.
 function startDriftMonitor() {
   if (driftMonitorInterval) return;
   driftMonitorInterval = setInterval(() => {
@@ -730,7 +678,6 @@ function startDriftMonitor() {
       synced,
     });
   }, DRIFT_MONITOR_MS);
-  // Don't keep the Node test runner alive on stray intervals (no-op in browser).
   if (driftMonitorInterval && typeof driftMonitorInterval.unref === "function") {
     driftMonitorInterval.unref();
   }
@@ -749,9 +696,6 @@ function scheduleBufferedAudio() {
   }
 }
 
-// Emit a VIDEO_SYNC_STATUS every Nth utterance so the sync badge updates
-// even outside the 5s interval cadence (e.g. in tests, or when the SW is
-// suspended and re-woken between timer ticks).
 const SYNC_STATUS_EVERY_N = 10;
 let utterancesScheduledSinceStart = 0;
 function emitSyncStatusIfDue() {
@@ -768,13 +712,6 @@ function emitSyncStatusIfDue() {
   });
 }
 
-// Screen-vs-audio drift correction. The video element keeps advancing at 1×
-// wall-clock, but the audio scheduler covers source mediaTime at a lower rate
-// when translations expand the original speech. After a settle period, we
-// estimate the audio's source-coverage rate (cumulative src_end advance ÷
-// wall-elapsed) and ask the content script to set the video's playbackRate
-// to match, holding screen and audio on the same source timeline. Clamped
-// 0.65×–1.15× so the slowdown stays imperceptible.
 function maybeApplyDriftCorrection(item) {
   if (item.originalStartSec === undefined || item.originalStartSec === null) return;
   const now = Date.now();
@@ -791,20 +728,17 @@ function maybeApplyDriftCorrection(item) {
   const srcCoveredSec = (item.originalEndSec || item.originalStartSec) - _driftAnchorSrcSec;
   if (srcCoveredSec <= 0) return;
 
-  // Integrate video source-coverage at whatever rate we last set so we know
-  // roughly where the screen is in source time.
   _driftIntegratedVideoSrc += _driftCurrentRate * (now - _driftIntegratedWall) / 1000;
   _driftIntegratedWall = now;
 
   const audioRate = srcCoveredSec / wallElapsedSec;
-  // driftSec > 0 ⇒ screen has covered more source than audio ⇒ slow video.
-  const driftSec = _driftIntegratedVideoSrc - srcCoveredSec;
+    const driftSec = _driftIntegratedVideoSrc - srcCoveredSec;
 
   let target = audioRate;
   if (driftSec > DRIFT_ACTIVE_CLOSURE_THRESHOLD) {
     target = audioRate - driftSec / DRIFT_CLOSURE_WINDOW_SEC;
   } else if (driftSec < -DRIFT_ACTIVE_CLOSURE_THRESHOLD) {
-    target = audioRate - driftSec / DRIFT_CLOSURE_WINDOW_SEC; // driftSec is negative here
+    target = audioRate - driftSec / DRIFT_CLOSURE_WINDOW_SEC; 
   }
   target = Math.max(DRIFT_RATE_MIN, Math.min(DRIFT_RATE_MAX, target));
 
@@ -839,32 +773,21 @@ function scheduleAudioItem(item) {
     nextPlayTime = playbackCtx.currentTime + 0.05;
   }
 
-  // Track how much translated audio overruns the original speech duration.
-  // If a 2s original utterance produces 2.6s of TTS, that's +0.6s overrun.
-  // This accumulates across utterances as translations consistently expand.
   const originalDuration = (item.originalEndSec || 0) - (item.originalStartSec || 0);
   if (originalDuration > 0) {
     translationOverrun += item.audioBuffer.duration - originalDuration;
-    if (translationOverrun < 0) translationOverrun = 0; // don't go negative
+    if (translationOverrun < 0) translationOverrun = 0; 
   }
-
-  // Insert natural gap from original speech timing, but REDUCE it by the
-  // accumulated overrun. This self-corrects translation expansion drift:
-  // if translations are running long, gaps shrink to compensate.
-  // The audio content itself is NEVER cut or sped up — only silence shrinks.
   if (item.originalStartSec > lastOriginalEndSec) {
     const gap = item.originalStartSec - lastOriginalEndSec;
     const adjustedGap = Math.max(0, gap - translationOverrun);
     nextPlayTime += Math.min(adjustedGap, 3.0);
-    // Consume the overrun we just compensated for
     translationOverrun = Math.max(0, translationOverrun - gap);
   }
 
   source.start(nextPlayTime);
   emitSyncStatusIfDue();
   maybeApplyDriftCorrection(item);
-
-  // Sync caption delivery with audio playback.
   const caption = pendingCaptions.get(item.seq);
   if (caption) {
     const delayMs = Math.max(0, (nextPlayTime - playbackCtx.currentTime) * 1000);
@@ -883,9 +806,6 @@ function scheduleAudioItem(item) {
 
   if (item.originalEndSec > 0) lastOriginalEndSec = item.originalEndSec;
 
-  // BUG-025: previously called scheduleBufferedAudio() unconditionally,
-  // which is a no-op walk over an empty queue. Now we only re-drain when
-  // there's actually pending work to schedule.
   source.onended = () => {
     if (decodedQueue.length > 0 && !isPaused && !isRebuffering) {
       scheduleBufferedAudio();

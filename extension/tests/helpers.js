@@ -36,12 +36,16 @@ function createChromeMock() {
       local: {
         _data: {},
         get: jest.fn(function (keys, cb) {
-          // Support both callback and promise forms
           if (cb) { cb(this._data); return; }
           return Promise.resolve({ ...this._data });
         }),
         set: jest.fn(function (data) {
           Object.assign(this._data, data);
+          return Promise.resolve();
+        }),
+        remove: jest.fn(function (keys) {
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          for (const k of keyList) delete this._data[k];
           return Promise.resolve();
         }),
       },
@@ -59,6 +63,11 @@ function createChromeMock() {
     sidePanel: { open: jest.fn() },
     offscreen: { createDocument: jest.fn(() => Promise.resolve()) },
     action: { onClicked: { addListener: (fn) => actionListeners.push(fn) } },
+    permissions: {
+      request: jest.fn(() => Promise.resolve(true)),
+      contains: jest.fn(() => Promise.resolve(true)),
+      remove: jest.fn(() => Promise.resolve(true)),
+    },
 
     _messageListeners: messageListeners,
     _actionListeners: actionListeners,
@@ -268,7 +277,6 @@ function createMockElement(tag) {
     removeEventListener: jest.fn(),
     getBoundingClientRect: jest.fn(() => ({ width: 0, height: 0, top: 0, left: 0 })),
     getContext: jest.fn(function () {
-      // Cache the context like a real canvas — same object returned every time
       if (!cachedCtx) {
         cachedCtx = {
           drawImage: jest.fn(),
@@ -345,10 +353,6 @@ function loadScript(relativePath, globals = {}) {
   return context;
 }
 
-/**
- * Load offscreen.js with injected test-state accessors so tests can read
- * script-scoped `let` variables via `ctx.__readState(); ctx.__test.*`.
- */
 function loadOffscreenScript(globals = {}) {
   const fullPath = path.resolve(__dirname, "..", "offscreen", "offscreen.js");
   let code = fs.readFileSync(fullPath, "utf-8");

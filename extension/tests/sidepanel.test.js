@@ -29,14 +29,15 @@ function createSidepanelDOM() {
     "sourceLang", "targetLang", "syncBadge",
     "errorBanner", "errorMessage", "retryBtn", "dismissBtn",
     "pauseResumeBtn", "newVideoBtn",
+    "backendUrl", "saveBackendBtn", "resetBackendBtn", "backendStatus",
   ];
   for (const id of ids) {
     els[id] = createMockElement(id === "sourceLang" || id === "targetLang" ? "select" : "div");
     els[id].id = id;
   }
-  // Set default values for selects
   els.sourceLang.value = "en";
   els.targetLang.value = "es";
+  els.backendUrl.value = "";
 
   return els;
 }
@@ -50,7 +51,7 @@ function loadSidepanel(opts = {}) {
   }
 
   const intervals = [];
-  let iid = 1; // browser interval IDs start at 1 (must be truthy)
+  let iid = 1; 
   let dateNow = 1000;
 
   const doc = {
@@ -63,6 +64,7 @@ function loadSidepanel(opts = {}) {
     chrome,
     document: doc,
     window: {},
+    URL,
     setInterval: (fn, ms) => { const id = iid++; intervals.push({ fn, ms, id }); return id; },
     clearInterval: (id) => { const i = intervals.findIndex((t) => t.id === id); if (i >= 0) intervals.splice(i, 1); },
     setTimeout: opts.setTimeout || setTimeout,
@@ -95,7 +97,6 @@ function loadSidepanel(opts = {}) {
       const listener = els.dismissBtn._listeners.click;
       if (listener && listener.length) listener[0]();
     },
-    /** Simulate playback starting (enables caption display) */
     startPlayback() {
       chrome._simulateMessage({ type: "HIDE_OVERLAY" }, {});
     },
@@ -125,13 +126,11 @@ describe("initialization", () => {
         ],
       },
     });
-    // emptyState should be hidden
     expect(env.els.emptyState.classList._set.has("hidden")).toBe(true);
   });
 
   test("handles missing storage data gracefully (first run)", () => {
     const env = loadSidepanel();
-    // No crash, defaults applied
     expect(env.els.sourceLang.value).toBe("en");
     expect(env.els.targetLang.value).toBe("es");
   });
@@ -145,7 +144,6 @@ describe("language selection", () => {
   test("source language change saved to storage", () => {
     const env = loadSidepanel();
     env.els.sourceLang.value = "ja";
-    // Trigger change event
     const listener = env.els.sourceLang._listeners.change;
     if (listener && listener.length) listener[0]();
     expect(env.chrome.storage.local.set).toHaveBeenCalledWith({ sourceLang: "ja" });
@@ -197,7 +195,6 @@ describe("start/stop", () => {
 
   test("successful start changes button to Stop", async () => {
     const env = loadSidepanel();
-    // Mock the response
     env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true });
     env.clickStart();
     await flushPromises();
@@ -240,7 +237,7 @@ describe("start/stop", () => {
     env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true });
     env.clickStart();
     await flushPromises();
-    env.clickStart(); // stop
+    env.clickStart(); 
     await flushPromises();
     expect(env.els.startStopBtn.textContent).toBe("Start Translating");
     expect(env.els.startStopBtn.disabled).toBe(false);
@@ -267,7 +264,7 @@ describe("connecting timer", () => {
     const env = loadSidepanel();
     env.setDateNow(1000);
     env.clickStart();
-    env.setDateNow(4000); // 3 seconds later
+    env.setDateNow(4000); 
     env.tickInterval(1000);
     expect(env.els.elapsedTimer.textContent).toContain("3");
   });
@@ -276,7 +273,7 @@ describe("connecting timer", () => {
     const env = loadSidepanel();
     env.setDateNow(1000);
     env.clickStart();
-    env.setDateNow(7000); // 6 seconds
+    env.setDateNow(7000); 
     env.tickInterval(1000);
     expect(env.els.warmingText.textContent).toContain("starting up");
   });
@@ -285,7 +282,7 @@ describe("connecting timer", () => {
     const env = loadSidepanel();
     env.setDateNow(1000);
     env.clickStart();
-    env.setDateNow(62000); // 61 seconds
+    env.setDateNow(62000); 
     env.tickInterval(1000);
     expect(env.els.errorBanner.classList._set.has("hidden")).toBe(false);
     expect(env.els.errorMessage.textContent).toContain("timed out");
@@ -305,9 +302,9 @@ describe("connecting timer", () => {
     const env = loadSidepanel();
     env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true });
     env.clickStart();
-    await flushPromises(); // let startCapture finish → isCapturing = true
+    await flushPromises(); 
     const countBefore = env.intervals.length;
-    env.clickStart(); // now isCapturing=true → calls stopCapture
+    env.clickStart(); 
     await flushPromises();
     expect(env.intervals.length).toBeLessThan(countBefore);
   });
@@ -330,7 +327,7 @@ describe("error banner", () => {
 
   test("dismiss button hides error", () => {
     const env = loadSidepanel();
-    env.els.errorBanner.classList.remove("hidden"); // show it
+    env.els.errorBanner.classList.remove("hidden"); 
     env.els.errorMessage.textContent = "some error";
     env.clickDismiss();
     expect(env.els.errorBanner.classList._set.has("hidden")).toBe(true);
@@ -377,37 +374,33 @@ describe("caption dedup", () => {
     const env = loadSidepanel();
     addCaption(env, "Goal by Lionel Messi from outside the box");
     addCaption(env, "Goal by Lionel Messi from outside the box with a curving shot");
-    // The new one contains the old (>20 chars) → should be rejected
     expect(env.els.captions.children.length).toBe(1);
   });
 
   test("short common word NOT falsely rejected as substring", () => {
     const env = loadSidepanel();
     addCaption(env, "the quick brown fox jumps over the lazy dog");
-    addCaption(env, "the"); // short — should NOT be rejected as substring
-    // Ideal: short strings should not be caught by substring check
-    // This tests for a false positive in the current dedup logic
+    addCaption(env, "the"); 
     expect(env.els.captions.children.length).toBe(2);
   });
 
   test("60% word overlap rejected for 4+ word captions", () => {
     const env = loadSidepanel();
     addCaption(env, "great pass from the midfielder to the striker");
-    addCaption(env, "great pass from the midfielder to striker now"); // high overlap
+    addCaption(env, "great pass from the midfielder to striker now"); 
     expect(env.els.captions.children.length).toBe(1);
   });
 
   test("short caption (<4 words) skips overlap check", () => {
     const env = loadSidepanel();
     addCaption(env, "What a goal");
-    addCaption(env, "What a save"); // 2/3 overlap but <4 words
+    addCaption(env, "What a save"); 
     expect(env.els.captions.children.length).toBe(2);
   });
 
   test("caption older than 10 entries back NOT checked", () => {
     const env = loadSidepanel();
     addCaption(env, "First caption ever spoken in this match today");
-    // Each filler must be unique with <60% word overlap with ALL others
     const fillers = [
       "brilliant overhead kick lands perfectly inside the net",
       "referee shows yellow card after dangerous sliding tackle",
@@ -422,14 +415,13 @@ describe("caption dedup", () => {
       "counterattack breaks through open space behind defensive line",
     ];
     for (const f of fillers) addCaption(env, f);
-    addCaption(env, "First caption ever spoken in this match today"); // same as #0, >10 entries back
+    addCaption(env, "First caption ever spoken in this match today"); 
     expect(env.els.captions.children.length).toBe(13);
   });
 
   test("total capped at 200 captions", () => {
     const env = loadSidepanel();
     for (let i = 0; i < 210; i++) addCaption(env, `Unique caption ${i}`);
-    // In-memory rendering capped at 200 (storage writes live in the SW now)
     expect(env.els.captions.children.length).toBeLessThanOrEqual(200);
   });
 
@@ -460,7 +452,6 @@ describe("caption rendering", () => {
 
   test("empty state shown when no captions", () => {
     const env = loadSidepanel();
-    // By default no captions loaded
     expect(env.els.emptyState.classList._set.has("hidden")).toBe(false);
   });
 
@@ -491,7 +482,7 @@ describe("caption rendering", () => {
     const env = loadSidepanel();
     addCaption(env, "Test", "Speaker 7");
     const item = env.els.captions.children[0];
-    expect(item.className).toContain("speaker-2"); // 7 % 5 = 2
+    expect(item.className).toContain("speaker-2"); 
   });
 
   test("original text shown when different from translated", () => {
@@ -551,15 +542,15 @@ describe("setStatus", () => {
 describe("message handling", () => {
   test("CAPTION hides warming-up and stops timer", () => {
     const env = loadSidepanel();
-    env.clickStart(); // start → warming up
-    env.startPlayback(); // enable caption display
+    env.clickStart(); 
+    env.startPlayback(); 
     env.sendMsg({ type: "CAPTION", caption: { speaker: "S1", translated: "Hi", original: "Hola" } });
     expect(env.els.warmingUp.classList._set.has("hidden")).toBe(true);
   });
 
   test("CAPTION sets status to streaming", () => {
     const env = loadSidepanel();
-    env.startPlayback(); // enable caption display
+    env.startPlayback(); 
     env.sendMsg({ type: "CAPTION", caption: { speaker: "S1", translated: "Hi", original: "Hola" } });
     expect(env.els.statusBadge.className).toContain("streaming");
   });
@@ -596,11 +587,9 @@ describe("message handling", () => {
 
   test("CHUNK_ERROR shows error but does not reset UI", () => {
     const env = loadSidepanel();
-    // First get into capturing state
     env.sendMsg({ type: "STATUS", status: "streaming" });
     env.sendMsg({ type: "CHUNK_ERROR", error: "Retry-able" });
     expect(env.els.errorBanner.classList._set.has("hidden")).toBe(false);
-    // Status should still be streaming (not reset to idle)
     expect(env.els.statusBadge.className).toContain("streaming");
   });
 
@@ -624,5 +613,89 @@ describe("message handling", () => {
     env.sendMsg({ type: "VIDEO_SYNC_STATUS", status: "buffering" });
     expect(env.els.syncBadge.textContent).toContain("Buffering");
     expect(env.els.syncBadge.className).toContain("waiting");
+  });
+});
+
+// ===================================================================
+// Backend URL settings (BYO-Modal opt-in)
+// ===================================================================
+
+describe("backend URL settings (BYO Modal)", () => {
+  function clickSave(env) {
+    const fn = env.els.saveBackendBtn._listeners.click;
+    if (fn && fn.length) fn[0]();
+  }
+  function clickReset(env) {
+    const fn = env.els.resetBackendBtn._listeners.click;
+    if (fn && fn.length) fn[0]();
+  }
+
+  test("loads saved backend URL from storage into the input on init", () => {
+    const env = loadSidepanel({
+      storedData: { backendUrl: "wss://alice--polyglot-streamingservice-web.modal.run" },
+    });
+    expect(env.els.backendUrl.value).toBe(
+      "wss://alice--polyglot-streamingservice-web.modal.run"
+    );
+  });
+
+  test("save with empty URL clears storage and reports default", async () => {
+    const env = loadSidepanel({ storedData: { backendUrl: "wss://old.modal.run" } });
+    env.els.backendUrl.value = "";
+    clickSave(env);
+    await flushPromises();
+    expect(env.chrome.storage.local._data.backendUrl).toBeUndefined();
+    expect(env.els.backendStatus.className).toContain("ok");
+  });
+
+  test("save with non-ws scheme rejects and does not persist", async () => {
+    const env = loadSidepanel();
+    env.els.backendUrl.value = "http://example.com";
+    clickSave(env);
+    await flushPromises();
+    expect(env.chrome.storage.local._data.backendUrl).toBeUndefined();
+    expect(env.els.backendStatus.className).toContain("error");
+    expect(env.chrome.permissions.request).not.toHaveBeenCalled();
+  });
+
+  test("save with wss Modal URL requests *.modal.run permission and persists on grant", async () => {
+    const env = loadSidepanel();
+    env.els.backendUrl.value = "wss://alice--polyglot-streamingservice-web.modal.run";
+    clickSave(env);
+    await flushPromises();
+    expect(env.chrome.permissions.request).toHaveBeenCalledWith({
+      origins: ["https://alice--polyglot-streamingservice-web.modal.run/*"],
+    });
+    expect(env.chrome.storage.local._data.backendUrl).toBe(
+      "wss://alice--polyglot-streamingservice-web.modal.run"
+    );
+    expect(env.els.backendStatus.className).toContain("ok");
+  });
+
+  test("save aborts and does not persist when user denies permission", async () => {
+    const env = loadSidepanel();
+    env.chrome.permissions.request.mockResolvedValueOnce(false);
+    env.els.backendUrl.value = "wss://bob--polyglot-streamingservice-web.modal.run";
+    clickSave(env);
+    await flushPromises();
+    expect(env.chrome.storage.local._data.backendUrl).toBeUndefined();
+    expect(env.els.backendStatus.className).toContain("error");
+  });
+
+  test("save with ws://localhost skips permission request (covered by host_permissions)", async () => {
+    const env = loadSidepanel();
+    env.els.backendUrl.value = "ws://localhost:9000";
+    clickSave(env);
+    await flushPromises();
+    expect(env.chrome.permissions.request).not.toHaveBeenCalled();
+    expect(env.chrome.storage.local._data.backendUrl).toBe("ws://localhost:9000");
+  });
+
+  test("reset clears stored URL", async () => {
+    const env = loadSidepanel({ storedData: { backendUrl: "wss://x.modal.run" } });
+    clickReset(env);
+    await flushPromises();
+    expect(env.chrome.storage.local._data.backendUrl).toBeUndefined();
+    expect(env.els.backendUrl.value).toBe("");
   });
 });
