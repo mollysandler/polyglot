@@ -97,6 +97,10 @@ let currentSourceMode = "tab";
 
 let micBufferedItems = [];
 let _playingBufferedMic = false;
+// Monotonically increasing token. Each startMicBufferedPlayback captures the
+// current token; the post-playback setTimeout only fires MIC_PLAYBACK_DONE if
+// the token is still current. Discard / restart / new capture bumps it.
+let _playbackToken = 0;
 
 let recentCaptionsSet = new Set();
 let recentCaptionsOrder = [];
@@ -185,12 +189,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "OFFSCREEN_DISCARD_MIC_BUFFER":
       micBufferedItems = [];
       _playingBufferedMic = false;
+      _playbackToken += 1; // cancel any pending MIC_PLAYBACK_DONE setTimeout
+      // Close the AudioContext we may have created for playback so it doesn't
+      // leak. A fresh one is created on the next startMicBufferedPlayback.
+      if (playbackCtx) {
+        playbackCtx.close().catch(() => {});
+        playbackCtx = null;
+      }
       sendResponse({ ok: true });
       break;
 
     case "OFFSCREEN_GET_MIC_BUFFER_STATUS":
       sendResponse({ ok: true, count: micBufferedItems.length });
       break;
+
+    case "OFFSCREEN_SAVE_MIC_BUFFER": {
+      const wavBytes = encodeMicBufferAsWav();
+      sendResponse({ ok: true, wavBytes });
+      break;
+    }
 
     case "SYNC_MODE_REPORT":
       syncMode = msg.mode || "canvas";
@@ -284,6 +301,11 @@ function handleWSClose(event) {
 async function startCapture(streamId, sourceLang, targetLang, sourceMode) {
   stopCapture();
   _resetDriftCorrection();
+  // Wipe any leftover mic buffer from a previous session so a fresh Start
+  // never replays old translated audio.
+  micBufferedItems = [];
+  _playingBufferedMic = false;
+  _playbackToken += 1;
 
   currentSourceMode = sourceMode === "mic" ? "mic" : "tab";
 
@@ -801,19 +823,94 @@ function startMicBufferedPlayback() {
   nextPlayTime = playbackCtx.currentTime + 0.1;
   lastOriginalEndSec = 0;
   translationOverrun = 0;
-  const items = micBufferedItems;
-  micBufferedItems = [];
+  // Iterate over micBufferedItems without clearing it — the user may still
+  // want to Save the audio after playback finishes. Reset happens on
+  // OFFSCREEN_DISCARD_MIC_BUFFER (Restart / Discard from the side panel).
+  const items = micBufferedItems.slice();
   const lastItem = items[items.length - 1];
   for (const it of items) {
     scheduleAudioItem(it);
   }
   if (lastItem && lastItem.audioBuffer) {
     const totalDurationMs = (nextPlayTime - playbackCtx.currentTime) * 1000;
+    const token = ++_playbackToken;
     setTimeout(() => {
+      // Skip MIC_PLAYBACK_DONE if the playback was cancelled (Discard / new
+      // capture / restart bumped the token).
+      if (token !== _playbackToken) return;
       _playingBufferedMic = false;
       sendToSW({ type: "MIC_PLAYBACK_DONE" });
     }, totalDurationMs + 200);
   }
+}
+
+// Encode the mic recording buffer as a single mono 16-bit PCM WAV. The
+// returned ArrayBuffer travels through chrome.runtime.sendMessage to the
+// side panel, which wraps it in a Blob and triggers a download. Assumes all
+// items in micBufferedItems share a sample rate (ElevenLabs output is
+// uniform within a session).
+function encodeMicBufferAsWav() {
+  if (micBufferedItems.length === 0) return null;
+  const first = micBufferedItems[0].audioBuffer;
+  if (!first) return null;
+  const sampleRate = first.sampleRate;
+  const bitsPerSample = 16;
+  const numChannels = 1;
+  const bytesPerSample = bitsPerSample / 8;
+
+  // Defensive: only include items whose sample rate matches the first item's
+  // rate. ElevenLabs is uniform within a session in practice, but skipping
+  // mismatched chunks is safer than writing them at the wrong rate in the
+  // WAV header.
+  const eligible = micBufferedItems.filter(
+    (it) => it.audioBuffer && it.audioBuffer.sampleRate === sampleRate
+  );
+  if (eligible.length !== micBufferedItems.length) {
+    console.warn(
+      "[offscreen] Skipping",
+      micBufferedItems.length - eligible.length,
+      "mic items with mismatched sample rate"
+    );
+  }
+  if (eligible.length === 0) return null;
+
+  let totalSamples = 0;
+  for (const it of eligible) totalSamples += it.audioBuffer.length;
+  const dataSize = totalSamples * numChannels * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // RIFF header
+  _wavWriteString(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  _wavWriteString(view, 8, "WAVE");
+  // fmt subchunk
+  _wavWriteString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);             // subchunk size
+  view.setUint16(20, 1, true);              // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * bytesPerSample, true); // byte rate
+  view.setUint16(32, numChannels * bytesPerSample, true);              // block align
+  view.setUint16(34, bitsPerSample, true);
+  // data subchunk
+  _wavWriteString(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (const it of eligible) {
+    const data = it.audioBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const s = Math.max(-1, Math.min(1, data[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return buffer;
+}
+
+function _wavWriteString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
 }
 
 function scheduleAudioItem(item) {

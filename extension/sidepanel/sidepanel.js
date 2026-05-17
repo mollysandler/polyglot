@@ -34,6 +34,10 @@ const micReplayPromptEl = document.getElementById("micReplayPrompt");
 const micReplayCountEl = document.getElementById("micReplayCount");
 const playMicAudioBtn = document.getElementById("playMicAudioBtn");
 const discardMicAudioBtn = document.getElementById("discardMicAudioBtn");
+const micPostPlaybackPromptEl = document.getElementById("micPostPlaybackPrompt");
+const micPostPlaybackStatusEl = document.getElementById("micPostPlaybackStatus");
+const saveMicAudioBtn = document.getElementById("saveMicAudioBtn");
+const restartMicBtn = document.getElementById("restartMicBtn");
 const micBufferLiveEl = document.getElementById("micBufferLive");
 const micBufferLiveCountEl = document.getElementById("micBufferLiveCount");
 
@@ -207,9 +211,12 @@ function resetUIToIdle() {
   warmingUp.classList.add("hidden");
   silenceWarning.classList.add("hidden");
   micReplayPromptEl.classList.add("hidden");
+  if (micPostPlaybackPromptEl) micPostPlaybackPromptEl.classList.add("hidden");
   if (micBufferLiveEl) micBufferLiveEl.classList.add("hidden");
   if (playMicAudioBtn) playMicAudioBtn.disabled = false;
   if (discardMicAudioBtn) discardMicAudioBtn.disabled = false;
+  if (saveMicAudioBtn) saveMicAudioBtn.disabled = false;
+  if (restartMicBtn) restartMicBtn.disabled = false;
 
   setStatus("idle");
 }
@@ -370,6 +377,22 @@ function showMicReplayPrompt(count) {
 
 function hideMicReplayPrompt() {
   micReplayPromptEl.classList.add("hidden");
+  // We don't always want to reveal startStopBtn here — the post-playback
+  // prompt also wants the start button hidden until the user clicks Restart.
+}
+
+function showMicPostPlaybackPrompt() {
+  micPostPlaybackStatusEl.textContent = "";
+  micPostPlaybackPromptEl.classList.remove("hidden");
+  startStopBtn.classList.add("hidden");
+  if (micBufferLiveEl) micBufferLiveEl.classList.add("hidden");
+  saveMicAudioBtn.disabled = false;
+  restartMicBtn.disabled = false;
+  setStatus("idle");
+}
+
+function hideMicPostPlaybackPrompt() {
+  micPostPlaybackPromptEl.classList.add("hidden");
   startStopBtn.classList.remove("hidden");
 }
 
@@ -392,9 +415,48 @@ discardMicAudioBtn.addEventListener("click", async () => {
     await chrome.runtime.sendMessage({ type: "DISCARD_BUFFERED_MIC_AUDIO" });
   } catch (err) {}
   hideMicReplayPrompt();
+  startStopBtn.classList.remove("hidden");
   resetUIToIdle();
   playMicAudioBtn.disabled = false;
   discardMicAudioBtn.disabled = false;
+});
+
+saveMicAudioBtn.addEventListener("click", async () => {
+  saveMicAudioBtn.disabled = true;
+  micPostPlaybackStatusEl.textContent = "Encoding…";
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "SAVE_BUFFERED_MIC_AUDIO" });
+    if (!resp || !resp.wavBytes) {
+      micPostPlaybackStatusEl.textContent = "(nothing to save)";
+      saveMicAudioBtn.disabled = false;
+      return;
+    }
+    const blob = new Blob([resp.wavBytes], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `polyglot-${stamp}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    micPostPlaybackStatusEl.textContent = "Saved.";
+  } catch (err) {
+    micPostPlaybackStatusEl.textContent = "Save failed: " + (err.message || err);
+  } finally {
+    saveMicAudioBtn.disabled = false;
+  }
+});
+
+restartMicBtn.addEventListener("click", async () => {
+  restartMicBtn.disabled = true;
+  try {
+    await chrome.runtime.sendMessage({ type: "DISCARD_BUFFERED_MIC_AUDIO" });
+  } catch (err) {}
+  hideMicPostPlaybackPrompt();
+  resetUIToIdle();
+  restartMicBtn.disabled = false;
 });
 
 
@@ -487,8 +549,11 @@ function extractSpeakerIndex(speaker) {
 chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "MIC_PLAYBACK_DONE") {
+    // Don't reset to idle automatically — leave the buffer intact and show a
+    // Save / Restart prompt so the user can download the file or explicitly
+    // end the session.
     hideMicReplayPrompt();
-    resetUIToIdle();
+    showMicPostPlaybackPrompt();
     return;
   }
 
