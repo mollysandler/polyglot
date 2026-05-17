@@ -81,7 +81,65 @@ Then in Chrome:
 4. Click the extension icon to open the side panel
 5. Visit a tab with audio (YouTube, Twitch, etc.), pick a target language, hit **Start**
 
-The extension is currently hardcoded to `ws://localhost:8765` (see `extension/offscreen/offscreen.js`).
+By default, the extension connects to `ws://localhost:8765`. To point it at a different backend (e.g.\ your own Modal deployment, see below), open the side panel, expand **Backend & settings**, paste a `ws://` or `wss://` URL, and click **Save**.
+
+## What you can translate
+
+Polyglot works on **any browser tab that plays audio**. Video is optional. If a `<video>` element is present we also keep the picture in sync with the dub; if not, you just get translated audio.
+
+### Sample tabs to try
+
+**Video (sync mode):**
+- Any non-English YouTube clip works — try a [DW News interview (DE)](https://www.youtube.com/results?search_query=dw+news+interview+deutsch), a [France 24 segment (FR)](https://www.youtube.com/results?search_query=france+24+en+direct), or a [LaLiga highlight (ES)](https://www.youtube.com/results?search_query=laliga+resumen). Pick a clip that's already started playing before you click Start.
+- Twitch streams in non-English channels — esports broadcasts in Korean or Spanish work especially well.
+
+**Audio-only (no `<video>` element):**
+- [BBC World Service (EN)](https://www.bbc.com/audio/play/live/bbc_world_service) — the page the live-stream caveat was discovered on
+- [Deutschlandfunk live (DE)](https://www.deutschlandfunk.de/livestream)
+- [France Info live (FR)](https://www.francetvinfo.fr/en-direct/radio.html)
+- [NHK World Radio (JA)](https://www3.nhk.or.jp/nhkworld/en/live/)
+- [RAI Radio 1 (IT)](https://www.raiplaysound.it/dirette/radio1)
+- [RNE Radio Nacional (ES)](https://www.rtve.es/play/audios/directo/radio-nacional/)
+
+### Live-stream caveat
+
+The pipeline needs ~5–10 s of headroom for ASR → translation → TTS, so you can't listen at the **true live edge**. The extension is translating audio that already played; it can't translate audio that hasn't happened yet. On live radio / live YouTube / live Twitch:
+
+- **Seek back 30–60 s** before clicking Start so there's already-aired content to translate
+- Or wait until you've been on the page for a minute or two so the player has built a back-buffer
+
+If you click Start at the exact live edge with nothing buffered, the captions panel will sit empty until enough audio plays through.
+
+## Optional: deploy your own Modal backend
+
+The local backend has zero hosting cost but only one user at a time, and your laptop has to be running. For shared / multi-user setups you can deploy the same backend to your own [Modal](https://modal.com) account. Polyglot doesn't host anything — you bring your own Modal account, your own API keys, and pay for your own usage.
+
+```bash
+# 1. Install Modal and authenticate against YOUR account (free tier available).
+pip install modal
+modal token new
+
+# 2. Create a Modal Secret named "sports-secrets" in your Modal dashboard
+#    (Settings → Secrets → New) containing:
+#      DEEPGRAM_API_KEY
+#      ELEVENLABS_API_KEY
+#      GOOGLE_APPLICATION_CREDENTIALS_JSON   (the JSON itself, not a file path)
+#      HUGGING_FACE_TOKEN
+
+# 3. Deploy. Modal will print a URL on your subdomain.
+cd server
+modal deploy modal_app_v2.py
+# → https://<your-username>--polyglot-streamingservice-web.modal.run
+
+# 4. In the extension side panel, open "Backend & settings", paste the URL
+#    (replacing https:// with wss:// and adding nothing else), then Save.
+#    Chrome will prompt you to grant access for *.modal.run. Accept.
+#
+#    Final stored value looks like:
+#      wss://<your-username>--polyglot-streamingservice-web.modal.run
+```
+
+That's it. Each user owns their deployment outright; no shared credentials, no shared bill.
 
 ## Tests
 
