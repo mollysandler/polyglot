@@ -8,7 +8,7 @@
 
 Two parts: a Chrome extension that captures tab audio, and a Python WebSocket server that handles ASR → translation → TTS.
 
-> **Status:** working prototype. Headed for [BYOK](#byok-direction) (bring-your-own-key) so it can ship without backend hosting.
+> **Status:** working prototype. Runs entirely on your machine by default; users who prefer a remote backend can opt in to deploying it to their own [Modal](https://modal.com) account (see [Optional: deploy your own Modal backend](#optional-deploy-your-own-modal-backend)) without sharing infrastructure with anyone else.
 
 ## Layout
 
@@ -33,7 +33,7 @@ tab audio ──► extension (PCM16 @ 16kHz, 200ms frames)
           ──► MP3 chunks back to extension ──► gapless playback in offscreen doc
 ```
 
-Sync: video is paused for ~30s while audio buffers, then video seeks back and playback resumes. Drift is corrected via small playback-rate adjustments. See `extension/BUGS.md` for the long form of how the sync was hardened.
+Sync: by default, the content script renders a frame-delayed `<canvas>` overlay on top of the original `<video>` (hidden via `opacity:0`) so the picture stays in step with the translated audio. On DRM-protected players where canvas readback is blocked (Netflix, some Twitch streams), it falls back to a one-shot seek-back. Drift between screen and audio is closed by small `playbackRate` adjustments. See `extension/BUGS.md` for the long form of how the sync was hardened.
 
 ## Getting API keys
 
@@ -112,7 +112,7 @@ If you click Start at the exact live edge with nothing buffered, the captions pa
 
 ## Optional: deploy your own Modal backend
 
-The local backend has zero hosting cost but only one user at a time, and your laptop has to be running. For shared / multi-user setups you can deploy the same backend to your own [Modal](https://modal.com) account. Polyglot doesn't host anything — you bring your own Modal account, your own API keys, and pay for your own usage.
+The local backend has zero hosting cost but only works while your laptop is running and reachable. If you'd rather have the backend live somewhere else — across devices, on a server, or just so you can close your laptop — you can deploy the same backend to your own [Modal](https://modal.com) account. Polyglot itself hosts nothing; you bring your own Modal account, your own API keys, and pay for your own usage. No other Polyglot user touches your deployment or quota.
 
 ```bash
 # 1. Install Modal and authenticate against YOUR account (free tier available).
@@ -147,16 +147,18 @@ That's it. Each user owns their deployment outright; no shared credentials, no s
 # Backend (79 tests)
 cd server && pytest tests/ -q
 
-# Extension (403 tests)
+# Extension (410 tests, 7 for BYO-Modal)
 cd extension && npm test
 ```
 
-## BYOK direction
+## Distribution model
 
-Today, API keys live on the server in `.env`. For a true BYOK shipped extension we'll need one of:
+Today Polyglot is **bring-your-own-keys** AND **bring-your-own-backend**: every user supplies their own Deepgram / ElevenLabs / Google Translate keys via `.env`, and chooses where the backend runs — the install default is `localhost`, and the side panel exposes a Backend URL setting that lets you point it at any `ws://` or `wss://` endpoint (e.g. your own Modal deployment) after a runtime permission grant.
 
-1. **Backend stays, user keys flow through WS handshake.** Still needs hosting; "BYOK" only in the sense that users supply keys.
-2. **Drop the backend entirely.** Extension calls Deepgram + ElevenLabs + a translation API directly using user-supplied keys. Real BYOK, zero infra. Loses the PyTorch-based speaker clustering in `server/speaker_embedder.py` (browser can't run the ECAPA-TDNN model).
+Two possible next steps for non-technical users:
+
+1. **Chrome Web Store listing + hosted backend.** Loses the BYO property; needs a moderation and billing story.
+2. **Drop the backend entirely.** Extension calls Deepgram + ElevenLabs + a translation API directly using user-supplied keys. Zero infra. Loses the PyTorch-based speaker clustering in `server/speaker_embedder.py` (browser can't run the ECAPA-TDNN model).
 
 Decision pending.
 
