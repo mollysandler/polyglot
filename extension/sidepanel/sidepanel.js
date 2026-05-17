@@ -286,13 +286,26 @@ async function startCapture() {
       const probeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       probeStream.getTracks().forEach((t) => t.stop());
     } catch (permErr) {
+      // Side panel often can't surface the Chrome mic prompt, so the call
+      // returns NotAllowedError immediately. Open the dedicated permission
+      // page in a popup window where the prompt is reliable.
       resetUIToIdle();
-      if (permErr && permErr.name === "NotAllowedError") {
-        showError("Microphone access was denied. Click the site-settings icon in the address bar (or visit chrome://settings/content/microphone) to allow it, then try again.");
-      } else if (permErr && permErr.name === "NotFoundError") {
+      if (permErr && permErr.name === "NotFoundError") {
         showError("No microphone detected. Connect or enable a microphone and try again.");
-      } else {
-        showError("Could not access the microphone: " + (permErr && permErr.message ? permErr.message : "unknown error"));
+        return;
+      }
+      // Open the helper window. We do NOT auto-restart capture afterward;
+      // the user grants permission there, comes back, and clicks Start again.
+      try {
+        await chrome.windows.create({
+          url: chrome.runtime.getURL("permission/permission.html"),
+          type: "popup",
+          width: 480,
+          height: 360,
+        });
+        showError("Microphone access was not granted. A new window has opened to grant access; come back and click Start when done.");
+      } catch (winErr) {
+        showError("Microphone access was denied and the permission helper failed to open. Visit chrome://settings/content/microphone and remove any block on this extension, then try again.");
       }
       return;
     }
