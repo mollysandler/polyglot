@@ -60,6 +60,26 @@ let currentUtterance = null;
 let lastOriginalEndSec = 0;
 let translationOverrun = 0; // cumulative seconds that translated audio exceeds original duration
 
+// ---- Screen-vs-audio drift correction state ----
+// Translation expansion (e.g. EN→ES ~+30% length) makes audio's source
+// mediaTime advance at <1× wall-clock rate while the live <video> keeps
+// advancing at 1×. Without intervention the screen runs progressively ahead
+// of the audio. We measure the audio's source-coverage rate and ask the
+// content script to set the video's playbackRate to match.
+let _driftAnchorWall = 0;           // Date.now() at the first scheduled audio chunk
+let _driftAnchorSrcSec = 0;         // src_start_sec of that first chunk
+let _driftCurrentRate = 1.0;        // current playbackRate we've requested
+let _driftLastSendMs = 0;
+let _driftIntegratedVideoSrc = 0;   // cumulative source covered by video at requested rates
+let _driftIntegratedWall = 0;       // wall-ms checkpoint for the above integration
+const DRIFT_SETTLE_SEC = 4;
+const DRIFT_SEND_INTERVAL_MS = 1500;
+const DRIFT_MIN_CHANGE = 0.02;
+const DRIFT_RATE_MIN = 0.65;
+const DRIFT_RATE_MAX = 1.15;
+const DRIFT_CLOSURE_WINDOW_SEC = 4;       // close existing drift over ~this many seconds
+const DRIFT_ACTIVE_CLOSURE_THRESHOLD = 0.3; // start closing when drift exceeds this (s)
+
 // Synchronous dedup (must fire before any await in finalizeUtterance)
 let seenUtteranceKeys = new Set();
 let highWaterEndSec = 0;
@@ -267,6 +287,7 @@ function handleWSClose(event) {
 
 async function startCapture(streamId, sourceLang, targetLang) {
   stopCapture();
+  _resetDriftCorrection();
 
   totalAudioCapturedSec = 0;
   bufferedDurationSec = 0;
@@ -365,6 +386,7 @@ function stopCapture() {
   currentUtterance = null;
   lastOriginalEndSec = 0;
   utterancesScheduledSinceStart = 0;
+  _resetDriftCorrection();
   pendingCaptions.clear();
   scheduledAudioTimes.clear();
 
@@ -746,6 +768,66 @@ function emitSyncStatusIfDue() {
   });
 }
 
+// Screen-vs-audio drift correction. The video element keeps advancing at 1×
+// wall-clock, but the audio scheduler covers source mediaTime at a lower rate
+// when translations expand the original speech. After a settle period, we
+// estimate the audio's source-coverage rate (cumulative src_end advance ÷
+// wall-elapsed) and ask the content script to set the video's playbackRate
+// to match, holding screen and audio on the same source timeline. Clamped
+// 0.65×–1.15× so the slowdown stays imperceptible.
+function maybeApplyDriftCorrection(item) {
+  if (item.originalStartSec === undefined || item.originalStartSec === null) return;
+  const now = Date.now();
+  if (_driftAnchorWall === 0) {
+    _driftAnchorWall = now;
+    _driftAnchorSrcSec = item.originalStartSec;
+    _driftIntegratedWall = now;
+    _driftIntegratedVideoSrc = 0;
+    return;
+  }
+  const wallElapsedSec = (now - _driftAnchorWall) / 1000;
+  if (wallElapsedSec < DRIFT_SETTLE_SEC) return;
+
+  const srcCoveredSec = (item.originalEndSec || item.originalStartSec) - _driftAnchorSrcSec;
+  if (srcCoveredSec <= 0) return;
+
+  // Integrate video source-coverage at whatever rate we last set so we know
+  // roughly where the screen is in source time.
+  _driftIntegratedVideoSrc += _driftCurrentRate * (now - _driftIntegratedWall) / 1000;
+  _driftIntegratedWall = now;
+
+  const audioRate = srcCoveredSec / wallElapsedSec;
+  // driftSec > 0 ⇒ screen has covered more source than audio ⇒ slow video.
+  const driftSec = _driftIntegratedVideoSrc - srcCoveredSec;
+
+  let target = audioRate;
+  if (driftSec > DRIFT_ACTIVE_CLOSURE_THRESHOLD) {
+    target = audioRate - driftSec / DRIFT_CLOSURE_WINDOW_SEC;
+  } else if (driftSec < -DRIFT_ACTIVE_CLOSURE_THRESHOLD) {
+    target = audioRate - driftSec / DRIFT_CLOSURE_WINDOW_SEC; // driftSec is negative here
+  }
+  target = Math.max(DRIFT_RATE_MIN, Math.min(DRIFT_RATE_MAX, target));
+
+  if (Math.abs(target - _driftCurrentRate) < DRIFT_MIN_CHANGE) return;
+  if (now - _driftLastSendMs < DRIFT_SEND_INTERVAL_MS) return;
+
+  _driftCurrentRate = target;
+  _driftLastSendMs = now;
+  sendToSW({ type: "VIDEO_ADJUST_RATE", rate: target });
+}
+
+function _resetDriftCorrection() {
+  _driftAnchorWall = 0;
+  _driftAnchorSrcSec = 0;
+  _driftLastSendMs = 0;
+  _driftIntegratedVideoSrc = 0;
+  _driftIntegratedWall = 0;
+  if (_driftCurrentRate !== 1.0) {
+    sendToSW({ type: "VIDEO_ADJUST_RATE", rate: 1.0 });
+    _driftCurrentRate = 1.0;
+  }
+}
+
 function scheduleAudioItem(item) {
   if (!playbackCtx) return;
 
@@ -780,6 +862,7 @@ function scheduleAudioItem(item) {
 
   source.start(nextPlayTime);
   emitSyncStatusIfDue();
+  maybeApplyDriftCorrection(item);
 
   // Sync caption delivery with audio playback.
   const caption = pendingCaptions.get(item.seq);

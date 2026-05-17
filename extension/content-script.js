@@ -56,6 +56,7 @@
   // Seek-back fallback mode
   let extensionPaused = false;
   let userPaused = false;
+  let _extensionDesiredRate = 1.0; // last rate the extension asked for; user changes get clamped back to this
 
   // Guards to distinguish extension-triggered pause/play from user-triggered
   let extensionTriggeredPause = false;
@@ -228,14 +229,13 @@
     v.addEventListener("waiting", waitingHandler);
     v.addEventListener("playing", playingHandler);
 
-    // In canvas mode the frame buffer drains at the video's playback rate
-    // while translated audio plays at 1x — any user-initiated rate change
-    // (YouTube's > / < keys, etc.) would cause permanent drift. Clamp to 1.0.
-    // In seekback mode we legitimately change rate for drift correction, so
-    // gate on syncMode.
+    // In canvas mode user-initiated rate changes (YouTube's > / < keys, etc.)
+    // would desync the canvas-overlay frame buffer. We still let the extension
+    // drive the rate (drift correction sets _extensionDesiredRate) — anything
+    // else gets clamped back to whatever the extension last asked for.
     rateChangeHandler = () => {
-      if (syncMode === "canvas" && v.playbackRate !== 1.0) {
-        v.playbackRate = 1.0;
+      if (syncMode === "canvas" && Math.abs(v.playbackRate - _extensionDesiredRate) > 0.001) {
+        v.playbackRate = _extensionDesiredRate;
       }
     };
     v.addEventListener("ratechange", rateChangeHandler);
@@ -743,7 +743,10 @@
         break;
 
       case "VIDEO_ADJUST_RATE":
+        _extensionDesiredRate = msg.rate;
         if (video && syncMode === "seekback") {
+          // Seek-back fallback: aggressive guard against the player snapping
+          // the rate back to 1.0 (some players do this on user-gesture absence).
           extensionPaused = true;
           video.playbackRate = msg.rate;
           let count = 0;
@@ -755,6 +758,12 @@
           setTimeout(() => {
             if (video && video.paused) { userPaused = false; video.play().catch(() => {}); }
           }, 300);
+        } else if (video) {
+          // Canvas mode: apply playbackRate so the screen-vs-audio drift
+          // correction (offscreen.js) actually slows the underlying <video>
+          // when translated audio falls behind. The ratechange handler will
+          // clamp back to _extensionDesiredRate if anything else moves it.
+          video.playbackRate = msg.rate;
         }
         sendResponse({ ok: !!video });
         break;
