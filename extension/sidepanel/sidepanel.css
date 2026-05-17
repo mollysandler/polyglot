@@ -42,19 +42,6 @@ body {
   font-weight: 500;
 }
 
-.sync-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 8px;
-  background: #1e293b;
-  color: #64748b;
-  font-weight: 500;
-}
-
-.sync-badge.synced { background: #052e16; color: #4ade80; }
-.sync-badge.no-video { background: #1e293b; color: #64748b; }
-.sync-badge.waiting { background: #422006; color: #fbbf24; }
-.sync-badge.drifting { background: #7f1d1d; color: #fca5a5; }
 
 .status-badge.paused { background: #422006; color: #fbbf24; }
 .status-badge.connecting { background: #422006; color: #fbbf24; }

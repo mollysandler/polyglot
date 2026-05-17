@@ -17,7 +17,6 @@ const warmingText = document.getElementById("warmingText");
 const elapsedTimer = document.getElementById("elapsedTimer");
 const sourceLangEl = document.getElementById("sourceLang");
 const targetLangEl = document.getElementById("targetLang");
-const syncBadge = document.getElementById("syncBadge");
 const errorBanner = document.getElementById("errorBanner");
 const errorMessage = document.getElementById("errorMessage");
 const retryBtn = document.getElementById("retryBtn");
@@ -130,7 +129,6 @@ function resetUIToIdle() {
   targetLangEl.disabled = false;
 
   warmingUp.classList.add("hidden");
-  syncBadge.className = "sync-badge hidden";
   silenceWarning.classList.add("hidden");
 
   setStatus("idle");
@@ -185,7 +183,6 @@ async function resetAndRestart({ alreadyStopped }) {
     // Reset transient UI state
     playbackStarted = false;
     silenceWarning.classList.add("hidden");
-    syncBadge.className = "sync-badge hidden";
     pauseResumeBtn.classList.add("hidden");
     newVideoBtn.classList.add("hidden");
 
@@ -426,20 +423,4 @@ chrome.runtime.onMessage.addListener((message) => {
     showError(message.error);
   }
 
-  if (message.type === "VIDEO_SYNC_STATUS") {
-    if (message.bufferAheadMs !== undefined && message.videoRate !== undefined) {
-      const bufSec = (message.bufferAheadMs / 1000).toFixed(1);
-      const rateStr = message.videoRate.toFixed(2);
-      if (message.synced) {
-        syncBadge.textContent = `Synced (${bufSec}s buf, ${rateStr}x)`;
-        syncBadge.className = "sync-badge synced";
-      } else {
-        syncBadge.textContent = `Low buffer (${bufSec}s, ${rateStr}x)`;
-        syncBadge.className = "sync-badge drifting";
-      }
-    } else if (message.status === "buffering") {
-      syncBadge.textContent = "Buffering...";
-      syncBadge.className = "sync-badge waiting";
-    }
-  }
 });
