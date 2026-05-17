@@ -546,6 +546,7 @@ chrome.runtime.onMessage.addListener((message) => {
       stopConnectingTimer();
     }
     if (message.status === "idle") {
+      if (!micReplayPromptEl.classList.contains("hidden")) return;
       resetUIToIdle();
     }
   }

@@ -391,7 +391,9 @@ function stopCapture() {
   scheduledAudioTimes.clear();
 
   sendToSW({ type: "HIDE_OVERLAY" });
-  sendToSW({ type: "STATUS", status: "idle" });
+  if (currentSourceMode !== "mic" || micBufferedItems.length === 0) {
+    sendToSW({ type: "STATUS", status: "idle" });
+  }
 }
 
 // ---------------------------------------------------------------------------
