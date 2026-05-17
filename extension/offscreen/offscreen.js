@@ -370,6 +370,14 @@ function stopCapture() {
   swKeepaliveInterval = null;
   fallbackTimer = null;
 
+  // If we're stopping a mic recording, anything still in decodedQueue
+  // (decoded but never scheduled) belongs in micBufferedItems so the
+  // user can replay it. The normal path runs scheduleBufferedAudio on
+  // every push, but stop can race with an in-flight decode.
+  if (currentSourceMode === "mic" && !_playingBufferedMic && decodedQueue.length > 0) {
+    for (const it of decodedQueue) micBufferedItems.push(it);
+  }
+
   isPlaying = false;
   isPaused = false;
   isRebuffering = false;
@@ -632,7 +640,12 @@ async function finalizeUtterance(utterance, originalStartSec, originalEndSec) {
     });
     bufferedDurationSec += audioBuffer.duration;
 
-    if (isPlaying && !isRebuffering) {
+    if (currentSourceMode === "mic" && !_playingBufferedMic) {
+      // Mic recording: no live playback, no buffer warm-up. Drain into
+      // micBufferedItems immediately so short utterances don't get lost
+      // when the user clicks Done before TARGET_BUFFER_SEC accumulates.
+      scheduleBufferedAudio();
+    } else if (isPlaying && !isRebuffering) {
       scheduleBufferedAudio();
     } else if (!isPlaying && bufferedDurationSec >= TARGET_BUFFER_SEC) {
       startPlayback();

@@ -286,16 +286,11 @@ async function startCapture() {
       const probeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       probeStream.getTracks().forEach((t) => t.stop());
     } catch (permErr) {
-      // Side panel often can't surface the Chrome mic prompt, so the call
-      // returns NotAllowedError immediately. Open the dedicated permission
-      // page in a popup window where the prompt is reliable.
       resetUIToIdle();
       if (permErr && permErr.name === "NotFoundError") {
         showError("No microphone detected. Connect or enable a microphone and try again.");
         return;
       }
-      // Open the helper window. We do NOT auto-restart capture afterward;
-      // the user grants permission there, comes back, and clicks Start again.
       try {
         await chrome.windows.create({
           url: chrome.runtime.getURL("permission/permission.html"),
@@ -329,8 +324,7 @@ async function startCapture() {
     startStopBtn.textContent = sourceMode === "mic" ? "Done" : "Stop";
     startStopBtn.className = "btn btn-stop";
     startStopBtn.disabled = false;
-    // Mic mode has no video to "reset", and we want the post-stop flow to focus
-    // attention on the Play/Discard prompt — so the New Video button stays hidden.
+
     if (sourceMode !== "mic") {
       newVideoBtn.classList.remove("hidden");
     }
@@ -348,8 +342,6 @@ async function stopCapture() {
     resp = await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
   } catch (err) {}
 
-  // Mic mode + we buffered some translated audio → show the replay prompt
-  // instead of returning straight to idle. Audio playback is opt-in.
   if (stoppedSourceMode === "mic" && resp && resp.micBufferedCount > 0) {
     showMicReplayPrompt(resp.micBufferedCount);
     isCapturing = false;
@@ -503,7 +495,8 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "CAPTION") {
-    if (!playbackStarted) return;
+
+    if (!playbackStarted && sourceMode !== "mic") return;
     warmingUp.classList.add("hidden");
     stopConnectingTimer();
     setStatus("streaming");
