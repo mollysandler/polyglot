@@ -168,23 +168,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         .catch((err) => sendResponse({ error: err.message }));
       return true;
 
-    case "STOP_CAPTURE":
+    // SW→offscreen-only message types. Renamed from the side-panel-facing
+    // variants so the SW and offscreen don't race as two listeners on the
+    // same chrome.runtime.sendMessage broadcast (which let the wrong
+    // response reach the side panel and made the replay prompt skip).
+    case "OFFSCREEN_STOP":
       stopCapture();
       sendResponse({ ok: true, micBufferedCount: micBufferedItems.length });
       break;
 
-    case "PLAY_BUFFERED_MIC_AUDIO":
+    case "OFFSCREEN_PLAY_MIC_BUFFER":
       startMicBufferedPlayback();
       sendResponse({ ok: true, count: micBufferedItems.length });
       break;
 
-    case "DISCARD_BUFFERED_MIC_AUDIO":
+    case "OFFSCREEN_DISCARD_MIC_BUFFER":
       micBufferedItems = [];
       _playingBufferedMic = false;
       sendResponse({ ok: true });
       break;
 
-    case "GET_MIC_BUFFER_STATUS":
+    case "OFFSCREEN_GET_MIC_BUFFER_STATUS":
       sendResponse({ ok: true, count: micBufferedItems.length });
       break;
 

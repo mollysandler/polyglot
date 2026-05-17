@@ -78,9 +78,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case "PLAY_BUFFERED_MIC_AUDIO":
+      chrome.runtime.sendMessage({ type: "OFFSCREEN_PLAY_MIC_BUFFER" })
+        .then((resp) => sendResponse(resp || { ok: true }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+
     case "DISCARD_BUFFERED_MIC_AUDIO":
+      chrome.runtime.sendMessage({ type: "OFFSCREEN_DISCARD_MIC_BUFFER" })
+        .then((resp) => sendResponse(resp || { ok: true }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+
     case "GET_MIC_BUFFER_STATUS":
-      chrome.runtime.sendMessage({ type: message.type })
+      chrome.runtime.sendMessage({ type: "OFFSCREEN_GET_MIC_BUFFER_STATUS" })
         .then((resp) => sendResponse(resp || { ok: true }))
         .catch(() => sendResponse({ ok: false }));
       return true;
@@ -254,7 +264,11 @@ async function handleStopCapture() {
   sessionActive = false;
   let micBufferedCount = 0;
   try {
-    const resp = await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
+    // OFFSCREEN_STOP (not STOP_CAPTURE) — exactly one listener for this name
+    // (the offscreen doc), so the response is unambiguous. STOP_CAPTURE is
+    // reserved for side-panel → SW; mixing the names made the SW and the
+    // offscreen race on the same broadcast and dropped the count.
+    const resp = await chrome.runtime.sendMessage({ type: "OFFSCREEN_STOP" });
     if (resp && typeof resp.micBufferedCount === "number") {
       micBufferedCount = resp.micBufferedCount;
     }
