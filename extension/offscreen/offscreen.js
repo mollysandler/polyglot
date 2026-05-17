@@ -815,6 +815,7 @@ function scheduleAudioItem(item) {
 
   if (currentSourceMode === "mic" && !_playingBufferedMic) {
     micBufferedItems.push(item);
+    sendToSW({ type: "MIC_BUFFER_COUNT", count: micBufferedItems.length });
     const caption = pendingCaptions.get(item.seq);
     if (caption) {
       sendCaption(caption);

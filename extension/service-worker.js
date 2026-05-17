@@ -86,6 +86,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case "MIC_PLAYBACK_DONE":
+    case "MIC_BUFFER_COUNT":
       broadcastToExtension(message);
       break;
 

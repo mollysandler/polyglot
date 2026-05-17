@@ -34,6 +34,8 @@ const micReplayPromptEl = document.getElementById("micReplayPrompt");
 const micReplayCountEl = document.getElementById("micReplayCount");
 const playMicAudioBtn = document.getElementById("playMicAudioBtn");
 const discardMicAudioBtn = document.getElementById("discardMicAudioBtn");
+const micBufferLiveEl = document.getElementById("micBufferLive");
+const micBufferLiveCountEl = document.getElementById("micBufferLiveCount");
 
 const DEFAULT_BACKEND_URL = "ws://localhost:8765";
 
@@ -205,6 +207,7 @@ function resetUIToIdle() {
   warmingUp.classList.add("hidden");
   silenceWarning.classList.add("hidden");
   micReplayPromptEl.classList.add("hidden");
+  if (micBufferLiveEl) micBufferLiveEl.classList.add("hidden");
   if (playMicAudioBtn) playMicAudioBtn.disabled = false;
   if (discardMicAudioBtn) discardMicAudioBtn.disabled = false;
 
@@ -324,6 +327,10 @@ async function startCapture() {
     startStopBtn.textContent = sourceMode === "mic" ? "Done" : "Stop";
     startStopBtn.className = "btn btn-stop";
     startStopBtn.disabled = false;
+    if (sourceMode === "mic") {
+      micBufferLiveCountEl.textContent = "0";
+      micBufferLiveEl.classList.remove("hidden");
+    }
 
     if (sourceMode !== "mic") {
       newVideoBtn.classList.remove("hidden");
@@ -482,6 +489,13 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "MIC_PLAYBACK_DONE") {
     hideMicReplayPrompt();
     resetUIToIdle();
+    return;
+  }
+
+  if (message.type === "MIC_BUFFER_COUNT") {
+    if (typeof message.count === "number") {
+      micBufferLiveCountEl.textContent = String(message.count);
+    }
     return;
   }
 
