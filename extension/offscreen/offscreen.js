@@ -80,8 +80,8 @@ const DRIFT_SEND_INTERVAL_MS = 1500;
 const DRIFT_MIN_CHANGE = 0.02;
 const DRIFT_RATE_MIN = 0.65;
 const DRIFT_RATE_MAX = 1.15;
-const DRIFT_CLOSURE_WINDOW_SEC = 4;       // close existing drift over ~this many seconds
-const DRIFT_ACTIVE_CLOSURE_THRESHOLD = 0.3; // start closing when drift exceeds this (s)
+const DRIFT_CLOSURE_WINDOW_SEC = 4;      
+const DRIFT_ACTIVE_CLOSURE_THRESHOLD = 0.3; 
 
 let seenUtteranceKeys = new Set();
 let highWaterEndSec = 0;
@@ -91,12 +91,10 @@ let firstUtteranceReceivedTime = 0;
 let measuredLatencySec = 0;
 let latencySentToContent = false;
 
-// Sync mode reported by content script
-let syncMode = "canvas"; // "canvas" or "seekback"
+let syncMode = "canvas"; 
 
-// Caption dedup — prevent relaying the same translated text twice.
-// Use a Set for O(1) lookup; track insertion order in a parallel array
-// so we can evict the oldest when we hit the cap.
+let currentSourceMode = "tab";
+
 let recentCaptionsSet = new Set();
 let recentCaptionsOrder = [];
 const RECENT_CAPTIONS_MAX = 20;
@@ -111,18 +109,10 @@ function rememberCaption(text) {
   return true;
 }
 
-// Captions held while paused — flushed in order on resume
 let heldCaptions = [];
 
-// Caption sync — hold captions until their corresponding audio starts playing.
-// Keyed by seq number. Whichever arrives first (caption or audio schedule) stores
-// its data; the second arrival triggers the timed delivery.
-let pendingCaptions = new Map(); // seq -> caption object (caption arrived before audio scheduled)
-let scheduledAudioTimes = new Map(); // seq -> nextPlayTime (audio scheduled before caption arrived)
-
-// Bound the sync maps: if one side of the pair never arrives (utterance
-// dropped by dedup, caption missing from backend, etc.) the entry would
-// otherwise leak forever. Map preserves insertion order, so oldest is first.
+let pendingCaptions = new Map(); 
+let scheduledAudioTimes = new Map(); 
 const SYNC_MAP_MAX = 50;
 function capSyncMap(m) {
   while (m.size > SYNC_MAP_MAX) m.delete(m.keys().next().value);
@@ -170,7 +160,7 @@ function flushHeldCaptions() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   switch (msg.type) {
     case "START_CAPTURE":
-      startCapture(msg.streamId, msg.sourceLang, msg.targetLang)
+      startCapture(msg.streamId, msg.sourceLang, msg.targetLang, msg.sourceMode)
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ error: err.message }));
       return true;
@@ -269,9 +259,11 @@ function handleWSClose(event) {
   }
 }
 
-async function startCapture(streamId, sourceLang, targetLang) {
+async function startCapture(streamId, sourceLang, targetLang, sourceMode) {
   stopCapture();
   _resetDriftCorrection();
+
+  currentSourceMode = sourceMode === "mic" ? "mic" : "tab";
 
   totalAudioCapturedSec = 0;
   bufferedDurationSec = 0;
@@ -294,14 +286,18 @@ async function startCapture(streamId, sourceLang, targetLang) {
   inReplayZone = false;
   syncMode = "canvas";
 
-  captureStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: streamId,
+  if (currentSourceMode === "mic") {
+    captureStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } else {
+    captureStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: {
+          chromeMediaSource: "tab",
+          chromeMediaSourceId: streamId,
+        },
       },
-    },
-  });
+    });
+  }
 
   audioCtx = new AudioContext();
   playbackCtx = new AudioContext();
@@ -713,6 +709,8 @@ function emitSyncStatusIfDue() {
 }
 
 function maybeApplyDriftCorrection(item) {
+  // Mic mode: there's no video to sync to. Skip entirely.
+  if (currentSourceMode === "mic") return;
   if (item.originalStartSec === undefined || item.originalStartSec === null) return;
   const now = Date.now();
   if (_driftAnchorWall === 0) {

@@ -14,6 +14,15 @@
     </header>
 
     <div class="controls">
+      <div class="source-row">
+        <label class="source-label">Input</label>
+        <div class="source-toggle" role="radiogroup" aria-label="Audio source">
+          <button type="button" id="sourceModeTab" class="source-option active" data-mode="tab" role="radio" aria-checked="true">Tab audio</button>
+          <button type="button" id="sourceModeMic" class="source-option" data-mode="mic" role="radio" aria-checked="false">Microphone</button>
+        </div>
+      </div>
+      <p id="micHint" class="source-hint hidden">Use headphones to avoid feedback into the mic.</p>
+
       <div class="lang-row">
         <label>
           Source

@@ -326,3 +326,60 @@ body {
 }
 .settings-status.ok    { color: #34d399; }
 .settings-status.error { color: #f87171; }
+
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.source-label {
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.source-toggle {
+  flex: 1;
+  display: flex;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.source-option {
+  flex: 1;
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.source-option:hover { color: #cbd5e1; }
+.source-option.active {
+  background: #1e293b;
+  color: #f1f5f9;
+}
+.source-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.source-hint {
+  font-size: 11px;
+  color: #fbbf24;
+  background: #1f1304;
+  border: 1px solid #422006;
+  border-radius: 6px;
+  padding: 5px 8px;
+  margin-top: -4px;
+  line-height: 1.4;
+}

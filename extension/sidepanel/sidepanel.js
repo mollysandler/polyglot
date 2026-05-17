@@ -27,24 +27,48 @@ const backendUrlEl = document.getElementById("backendUrl");
 const saveBackendBtn = document.getElementById("saveBackendBtn");
 const resetBackendBtn = document.getElementById("resetBackendBtn");
 const backendStatusEl = document.getElementById("backendStatus");
+const sourceModeTabBtn = document.getElementById("sourceModeTab");
+const sourceModeMicBtn = document.getElementById("sourceModeMic");
+const micHintEl = document.getElementById("micHint");
 
 const DEFAULT_BACKEND_URL = "ws://localhost:8765";
 
 let isCapturing = false;
 let isPaused = false;
-let playbackStarted = false; 
+let playbackStarted = false;
 let captions = [];
 let connectingStartTime = null;
 let connectingTimerInterval = null;
-chrome.storage.local.get(["sourceLang", "targetLang", "captionHistory", "backendUrl"], (data) => {
+let sourceMode = "tab";
+
+function applySourceModeUI(mode) {
+  sourceMode = mode === "mic" ? "mic" : "tab";
+  const isMic = sourceMode === "mic";
+  sourceModeTabBtn.classList.toggle("active", !isMic);
+  sourceModeMicBtn.classList.toggle("active", isMic);
+  sourceModeTabBtn.setAttribute("aria-checked", String(!isMic));
+  sourceModeMicBtn.setAttribute("aria-checked", String(isMic));
+  micHintEl.classList.toggle("hidden", !isMic);
+}
+
+chrome.storage.local.get(["sourceLang", "targetLang", "captionHistory", "backendUrl", "sourceMode"], (data) => {
   if (data.sourceLang) sourceLangEl.value = data.sourceLang;
   if (data.targetLang) targetLangEl.value = data.targetLang;
   if (data.backendUrl) backendUrlEl.value = data.backendUrl;
+  if (data.sourceMode) applySourceModeUI(data.sourceMode);
   if (data.captionHistory && data.captionHistory.length > 0) {
     captions = data.captionHistory;
     renderCaptions();
   }
 });
+
+function setSourceMode(mode) {
+  if (isCapturing) return; 
+  applySourceModeUI(mode);
+  chrome.storage.local.set({ sourceMode });
+}
+sourceModeTabBtn.addEventListener("click", () => setSourceMode("tab"));
+sourceModeMicBtn.addEventListener("click", () => setSourceMode("mic"));
 
 sourceLangEl.addEventListener("change", () => {
   chrome.storage.local.set({ sourceLang: sourceLangEl.value });
@@ -170,6 +194,8 @@ function resetUIToIdle() {
 
   sourceLangEl.disabled = false;
   targetLangEl.disabled = false;
+  sourceModeTabBtn.disabled = false;
+  sourceModeMicBtn.disabled = false;
 
   warmingUp.classList.add("hidden");
   silenceWarning.classList.add("hidden");
@@ -239,6 +265,8 @@ async function startCapture() {
   startStopBtn.disabled = true;
   sourceLangEl.disabled = true;
   targetLangEl.disabled = true;
+  sourceModeTabBtn.disabled = true;
+  sourceModeMicBtn.disabled = true;
   silenceWarning.classList.add("hidden");
   hideError();
   warmingUp.classList.remove("hidden");
@@ -250,6 +278,7 @@ async function startCapture() {
       type: "START_CAPTURE",
       sourceLang: sourceLangEl.value,
       targetLang: targetLangEl.value,
+      sourceMode,
     });
 
     if (response && response.error) {

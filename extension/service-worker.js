@@ -66,7 +66,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case "START_CAPTURE":
-      handleStartCapture(message.sourceLang, message.targetLang)
+      handleStartCapture(message.sourceLang, message.targetLang, message.sourceMode)
         .then((result) => sendResponse(result))
         .catch((err) => sendResponse({ error: err.message }));
       return true;
@@ -187,12 +187,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Start capture
 // ---------------------------------------------------------------------------
 
-async function handleStartCapture(sourceLang, targetLang) {
+async function handleStartCapture(sourceLang, targetLang, sourceMode) {
+  const mode = sourceMode === "mic" ? "mic" : "tab";
+
+  // Create offscreen document (used for both modes — it hosts the AudioContext
+  // and WebSocket).
+  await ensureOffscreenDocument();
+
+  if (mode === "mic") {
+    // Microphone mode: no tab capture, no content-script injection, no tab
+    // mute. The offscreen doc will call getUserMedia({audio:true}) directly.
+    sessionActive = true;
+    activeTabId = null;
+    return await chrome.runtime.sendMessage({
+      type: "START_CAPTURE",
+      sourceMode: "mic",
+      sourceLang,
+      targetLang,
+    });
+  }
+
+  // Tab-audio mode (original flow)
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) throw new Error("No active tab found");
   activeTabId = tab.id;
 
-  // Inject content script
   try {
     await chrome.scripting.executeScript({
       target: { tabId: activeTabId },
@@ -202,22 +221,18 @@ async function handleStartCapture(sourceLang, targetLang) {
     console.warn("Content script injection failed (may already be injected):", e);
   }
 
-  // Get tab media stream ID
   const streamId = await chrome.tabCapture.getMediaStreamId({
     targetTabId: activeTabId,
   });
-
-  // Create offscreen document
-  await ensureOffscreenDocument();
 
   // Mute the tab so the user only hears translated audio.
   // Tab capture still receives audio even when the tab is muted.
   await chrome.tabs.update(activeTabId, { muted: true });
 
-  // Tell offscreen to start capture
   sessionActive = true;
   return await chrome.runtime.sendMessage({
     type: "START_CAPTURE",
+    sourceMode: "tab",
     streamId,
     sourceLang,
     targetLang,
