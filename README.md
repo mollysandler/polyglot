@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="extension/icons/icon512.png" alt="Polyglot" width="120" />
+</p>
+
 # Polyglot
 
 **Real-time translation of any browser tab's audio.** Speak English on a livestream, hear it in Spanish (or 10+ other languages) within ~1–2 seconds, in a voice that matches the speaker. Captions in a side panel.
