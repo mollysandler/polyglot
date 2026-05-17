@@ -95,6 +95,9 @@ let syncMode = "canvas";
 
 let currentSourceMode = "tab";
 
+let micBufferedItems = [];
+let _playingBufferedMic = false;
+
 let recentCaptionsSet = new Set();
 let recentCaptionsOrder = [];
 const RECENT_CAPTIONS_MAX = 20;
@@ -168,6 +171,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "STOP_CAPTURE":
       stopCapture();
       sendResponse({ ok: true });
+      break;
+
+    case "PLAY_BUFFERED_MIC_AUDIO":
+      startMicBufferedPlayback();
+      sendResponse({ ok: true, count: micBufferedItems.length });
+      break;
+
+    case "DISCARD_BUFFERED_MIC_AUDIO":
+      micBufferedItems = [];
+      _playingBufferedMic = false;
+      sendResponse({ ok: true });
+      break;
+
+    case "GET_MIC_BUFFER_STATUS":
+      sendResponse({ ok: true, count: micBufferedItems.length });
       break;
 
     case "SYNC_MODE_REPORT":
@@ -709,7 +727,6 @@ function emitSyncStatusIfDue() {
 }
 
 function maybeApplyDriftCorrection(item) {
-  // Mic mode: there's no video to sync to. Skip entirely.
   if (currentSourceMode === "mic") return;
   if (item.originalStartSec === undefined || item.originalStartSec === null) return;
   const now = Date.now();
@@ -760,8 +777,42 @@ function _resetDriftCorrection() {
   }
 }
 
+function startMicBufferedPlayback() {
+  if (micBufferedItems.length === 0) return;
+  if (!playbackCtx) {
+    playbackCtx = new AudioContext();
+  }
+  _playingBufferedMic = true;
+  nextPlayTime = playbackCtx.currentTime + 0.1;
+  lastOriginalEndSec = 0;
+  translationOverrun = 0;
+  const items = micBufferedItems;
+  micBufferedItems = [];
+  const lastItem = items[items.length - 1];
+  for (const it of items) {
+    scheduleAudioItem(it);
+  }
+  if (lastItem && lastItem.audioBuffer) {
+    const totalDurationMs = (nextPlayTime - playbackCtx.currentTime) * 1000;
+    setTimeout(() => {
+      _playingBufferedMic = false;
+      sendToSW({ type: "MIC_PLAYBACK_DONE" });
+    }, totalDurationMs + 200);
+  }
+}
+
 function scheduleAudioItem(item) {
   if (!playbackCtx) return;
+
+  if (currentSourceMode === "mic" && !_playingBufferedMic) {
+    micBufferedItems.push(item);
+    const caption = pendingCaptions.get(item.seq);
+    if (caption) {
+      sendCaption(caption);
+      pendingCaptions.delete(item.seq);
+    }
+    return;
+  }
 
   const source = playbackCtx.createBufferSource();
   source.buffer = item.audioBuffer;

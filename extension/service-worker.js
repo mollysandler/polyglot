@@ -73,9 +73,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "STOP_CAPTURE":
       handleStopCapture()
-        .then(() => sendResponse({ ok: true }))
+        .then((result) => sendResponse(result || { ok: true }))
         .catch(() => sendResponse({ ok: true }));
       return true;
+
+    case "PLAY_BUFFERED_MIC_AUDIO":
+    case "DISCARD_BUFFERED_MIC_AUDIO":
+    case "GET_MIC_BUFFER_STATUS":
+      chrome.runtime.sendMessage({ type: message.type })
+        .then((resp) => sendResponse(resp || { ok: true }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+
+    case "MIC_PLAYBACK_DONE":
+      broadcastToExtension(message);
+      break;
 
     // --------------- Relay from offscreen -> side panel ---------------
     case "CAPTION":
@@ -245,11 +257,19 @@ async function handleStopCapture() {
     await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
   } catch (e) {}
   if (activeTabId) {
-    // Unmute the tab
     chrome.tabs.update(activeTabId, { muted: false }).catch(() => {});
     sendToContentScript({ type: "VIDEO_CLEANUP" });
     activeTabId = null;
   }
+  // Ask offscreen whether there's a mic recording buffer waiting for replay.
+  // The side panel uses this to decide whether to show the "Play your audio?"
+  // prompt vs. resetting straight to idle.
+  let micBufferedCount = 0;
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "GET_MIC_BUFFER_STATUS" });
+    if (resp && typeof resp.count === "number") micBufferedCount = resp.count;
+  } catch (e) {}
+  return { ok: true, micBufferedCount };
 }
 
 // ---------------------------------------------------------------------------

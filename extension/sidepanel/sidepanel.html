@@ -65,6 +65,14 @@
         <button id="newVideoBtn" class="btn btn-new-video hidden" title="Reset speakers + captions and start fresh">New Video</button>
       </div>
 
+      <div id="micReplayPrompt" class="mic-replay-prompt hidden">
+        <p class="mic-replay-text">Play your translated audio? <span id="micReplayCount" class="mic-replay-count"></span></p>
+        <div class="btn-row">
+          <button id="playMicAudioBtn" class="btn btn-start">Play</button>
+          <button id="discardMicAudioBtn" class="btn btn-new-video">Discard</button>
+        </div>
+      </div>
+
       <details class="settings">
         <summary>Backend &amp; settings</summary>
         <div class="settings-body">

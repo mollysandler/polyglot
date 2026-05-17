@@ -30,6 +30,10 @@ const backendStatusEl = document.getElementById("backendStatus");
 const sourceModeTabBtn = document.getElementById("sourceModeTab");
 const sourceModeMicBtn = document.getElementById("sourceModeMic");
 const micHintEl = document.getElementById("micHint");
+const micReplayPromptEl = document.getElementById("micReplayPrompt");
+const micReplayCountEl = document.getElementById("micReplayCount");
+const playMicAudioBtn = document.getElementById("playMicAudioBtn");
+const discardMicAudioBtn = document.getElementById("discardMicAudioBtn");
 
 const DEFAULT_BACKEND_URL = "ws://localhost:8765";
 
@@ -184,6 +188,7 @@ function resetUIToIdle() {
 
   startStopBtn.textContent = "Start Translating";
   startStopBtn.className = "btn btn-start";
+  startStopBtn.classList.remove("hidden");
   startStopBtn.disabled = false;
 
   pauseResumeBtn.textContent = "Pause";
@@ -199,6 +204,9 @@ function resetUIToIdle() {
 
   warmingUp.classList.add("hidden");
   silenceWarning.classList.add("hidden");
+  micReplayPromptEl.classList.add("hidden");
+  if (playMicAudioBtn) playMicAudioBtn.disabled = false;
+  if (discardMicAudioBtn) discardMicAudioBtn.disabled = false;
 
   setStatus("idle");
 }
@@ -273,6 +281,23 @@ async function startCapture() {
   setStatus("connecting");
   startConnectingTimer();
 
+  if (sourceMode === "mic") {
+    try {
+      const probeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      probeStream.getTracks().forEach((t) => t.stop());
+    } catch (permErr) {
+      resetUIToIdle();
+      if (permErr && permErr.name === "NotAllowedError") {
+        showError("Microphone access was denied. Click the site-settings icon in the address bar (or visit chrome://settings/content/microphone) to allow it, then try again.");
+      } else if (permErr && permErr.name === "NotFoundError") {
+        showError("No microphone detected. Connect or enable a microphone and try again.");
+      } else {
+        showError("Could not access the microphone: " + (permErr && permErr.message ? permErr.message : "unknown error"));
+      }
+      return;
+    }
+  }
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: "START_CAPTURE",
@@ -288,10 +313,14 @@ async function startCapture() {
     }
 
     isCapturing = true;
-    startStopBtn.textContent = "Stop";
+    startStopBtn.textContent = sourceMode === "mic" ? "Done" : "Stop";
     startStopBtn.className = "btn btn-stop";
     startStopBtn.disabled = false;
-    newVideoBtn.classList.remove("hidden");
+    // Mic mode has no video to "reset", and we want the post-stop flow to focus
+    // attention on the Play/Discard prompt — so the New Video button stays hidden.
+    if (sourceMode !== "mic") {
+      newVideoBtn.classList.remove("hidden");
+    }
   } catch (err) {
     resetUIToIdle();
     showError("Failed to start capture. Please try again.");
@@ -300,12 +329,61 @@ async function startCapture() {
 
 async function stopCapture() {
   startStopBtn.disabled = true;
+  const stoppedSourceMode = sourceMode;
+  let resp = null;
   try {
-    await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
-  } catch (err) {
+    resp = await chrome.runtime.sendMessage({ type: "STOP_CAPTURE" });
+  } catch (err) {}
+
+  // Mic mode + we buffered some translated audio → show the replay prompt
+  // instead of returning straight to idle. Audio playback is opt-in.
+  if (stoppedSourceMode === "mic" && resp && resp.micBufferedCount > 0) {
+    showMicReplayPrompt(resp.micBufferedCount);
+    isCapturing = false;
+    startStopBtn.disabled = false;
+    return;
   }
+
   resetUIToIdle();
 }
+
+function showMicReplayPrompt(count) {
+  micReplayCountEl.textContent = count === 1 ? "(1 chunk ready)" : `(${count} chunks ready)`;
+  micReplayPromptEl.classList.remove("hidden");
+  startStopBtn.classList.add("hidden");
+  pauseResumeBtn.classList.add("hidden");
+  newVideoBtn.classList.add("hidden");
+  setStatus("idle");
+}
+
+function hideMicReplayPrompt() {
+  micReplayPromptEl.classList.add("hidden");
+  startStopBtn.classList.remove("hidden");
+}
+
+playMicAudioBtn.addEventListener("click", async () => {
+  playMicAudioBtn.disabled = true;
+  discardMicAudioBtn.disabled = true;
+  setStatus("streaming");
+  try {
+    await chrome.runtime.sendMessage({ type: "PLAY_BUFFERED_MIC_AUDIO" });
+  } catch (err) {
+    showError("Could not start playback: " + (err.message || err));
+    playMicAudioBtn.disabled = false;
+    discardMicAudioBtn.disabled = false;
+  }
+});
+
+discardMicAudioBtn.addEventListener("click", async () => {
+  discardMicAudioBtn.disabled = true;
+  try {
+    await chrome.runtime.sendMessage({ type: "DISCARD_BUFFERED_MIC_AUDIO" });
+  } catch (err) {}
+  hideMicReplayPrompt();
+  resetUIToIdle();
+  playMicAudioBtn.disabled = false;
+  discardMicAudioBtn.disabled = false;
+});
 
 
 function setStatus(status) {
@@ -395,6 +473,12 @@ function extractSpeakerIndex(speaker) {
 // -- Listen for messages --
 
 chrome.runtime.onMessage.addListener((message) => {
+
+  if (message.type === "MIC_PLAYBACK_DONE") {
+    hideMicReplayPrompt();
+    resetUIToIdle();
+    return;
+  }
 
   if (message.type === "URL_CHANGED") {
     resetAndRestart({ alreadyStopped: true }).catch(() => {});

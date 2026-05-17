@@ -383,3 +383,27 @@ body {
   margin-top: -4px;
   line-height: 1.4;
 }
+
+/* Mic-replay prompt — shown after Done in mic mode */
+.mic-replay-prompt {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mic-replay-text {
+  font-size: 13px;
+  color: #e2e8f0;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.mic-replay-count {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: 4px;
+}
