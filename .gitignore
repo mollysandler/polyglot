@@ -34,3 +34,7 @@ Thumbs.db
 temp_*.wav
 translated_*.wav
 pretrained_models/
+
+# Generated assets — icon-master.png is a 1:1 duplicate of icon512.png
+# emitted by the icon generator; keep it untracked.
+extension/icons/icon-master.png

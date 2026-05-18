@@ -89,12 +89,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .catch(() => sendResponse({ ok: false }));
       return true;
 
-    case "GET_MIC_BUFFER_STATUS":
-      chrome.runtime.sendMessage({ type: "OFFSCREEN_GET_MIC_BUFFER_STATUS" })
-        .then((resp) => sendResponse(resp || { ok: true }))
-        .catch(() => sendResponse({ ok: false }));
-      return true;
-
     case "SAVE_BUFFERED_MIC_AUDIO":
       chrome.runtime.sendMessage({ type: "OFFSCREEN_SAVE_MIC_BUFFER" })
         .then((resp) => sendResponse(resp || { ok: true }))

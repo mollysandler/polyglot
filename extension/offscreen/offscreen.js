@@ -42,7 +42,7 @@ const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000];
 
 const DEBUG = false;
-function dlog(...args) { if (DEBUG) dlog(...args); }
+function dlog(...args) { if (DEBUG) console.log("[offscreen]", ...args); }
 
 // ---------------------------------------------------------------------------
 // State
@@ -197,10 +197,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         playbackCtx = null;
       }
       sendResponse({ ok: true });
-      break;
-
-    case "OFFSCREEN_GET_MIC_BUFFER_STATUS":
-      sendResponse({ ok: true, count: micBufferedItems.length });
       break;
 
     case "OFFSCREEN_SAVE_MIC_BUFFER": {
