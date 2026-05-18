@@ -37,7 +37,8 @@ const discardMicAudioBtn = document.getElementById("discardMicAudioBtn");
 const micPostPlaybackPromptEl = document.getElementById("micPostPlaybackPrompt");
 const micPostPlaybackStatusEl = document.getElementById("micPostPlaybackStatus");
 const saveMicAudioBtn = document.getElementById("saveMicAudioBtn");
-const restartMicBtn = document.getElementById("restartMicBtn");
+const replayMicAudioBtn = document.getElementById("replayMicAudioBtn");
+const newMicRecordingBtn = document.getElementById("newMicRecordingBtn");
 const micBufferLiveEl = document.getElementById("micBufferLive");
 const micBufferLiveCountEl = document.getElementById("micBufferLiveCount");
 
@@ -216,7 +217,8 @@ function resetUIToIdle() {
   if (playMicAudioBtn) playMicAudioBtn.disabled = false;
   if (discardMicAudioBtn) discardMicAudioBtn.disabled = false;
   if (saveMicAudioBtn) saveMicAudioBtn.disabled = false;
-  if (restartMicBtn) restartMicBtn.disabled = false;
+  if (replayMicAudioBtn) replayMicAudioBtn.disabled = false;
+  if (newMicRecordingBtn) newMicRecordingBtn.disabled = false;
 
   setStatus("idle");
 }
@@ -386,8 +388,9 @@ function showMicPostPlaybackPrompt() {
   micPostPlaybackPromptEl.classList.remove("hidden");
   startStopBtn.classList.add("hidden");
   if (micBufferLiveEl) micBufferLiveEl.classList.add("hidden");
+  replayMicAudioBtn.disabled = false;
   saveMicAudioBtn.disabled = false;
-  restartMicBtn.disabled = false;
+  newMicRecordingBtn.disabled = false;
   setStatus("idle");
 }
 
@@ -449,14 +452,28 @@ saveMicAudioBtn.addEventListener("click", async () => {
   }
 });
 
-restartMicBtn.addEventListener("click", async () => {
-  restartMicBtn.disabled = true;
+replayMicAudioBtn.addEventListener("click", async () => {
+  replayMicAudioBtn.disabled = true;
+  micPostPlaybackStatusEl.textContent = "Playing…";
+  setStatus("streaming");
+  try {
+    await chrome.runtime.sendMessage({ type: "PLAY_BUFFERED_MIC_AUDIO" });
+    // Re-enable + status reset happens when MIC_PLAYBACK_DONE arrives in the
+    // listener (which calls showMicPostPlaybackPrompt → enables the button).
+  } catch (err) {
+    micPostPlaybackStatusEl.textContent = "Replay failed: " + (err.message || err);
+    replayMicAudioBtn.disabled = false;
+  }
+});
+
+newMicRecordingBtn.addEventListener("click", async () => {
+  newMicRecordingBtn.disabled = true;
   try {
     await chrome.runtime.sendMessage({ type: "DISCARD_BUFFERED_MIC_AUDIO" });
   } catch (err) {}
   hideMicPostPlaybackPrompt();
   resetUIToIdle();
-  restartMicBtn.disabled = false;
+  newMicRecordingBtn.disabled = false;
 });
 
 
