@@ -288,13 +288,16 @@ describe("handleStartCapture", () => {
 // ===================================================================
 
 describe("handleStopCapture", () => {
-  test("sends STOP_CAPTURE to offscreen", async () => {
+  test("sends OFFSCREEN_STOP to offscreen", async () => {
+    // SW receives STOP_CAPTURE from the side panel, then forwards
+    // OFFSCREEN_STOP to the offscreen doc (renamed so the SW and offscreen
+    // don't race as two listeners on the same broadcast).
     const env = loadServiceWorker();
     await env.sendMsgAsync({ type: "START_CAPTURE", sourceLang: "en", targetLang: "es" });
     env.chrome.runtime.sendMessage.mockClear();
     await env.sendMsgAsync({ type: "STOP_CAPTURE" });
     expect(env.sentToOffscreen()).toContainEqual(
-      expect.objectContaining({ type: "STOP_CAPTURE" })
+      expect.objectContaining({ type: "OFFSCREEN_STOP" })
     );
   });
 
@@ -339,6 +342,75 @@ describe("handleStopCapture", () => {
     const { isAsync } = env.sendMsg({ type: "STOP_CAPTURE" });
     expect(isAsync).toBe(true);
   });
+});
+
+// ===================================================================
+// Mic-mode post-playback flow (Play again / Save / New recording)
+// ===================================================================
+//
+// Side panel → SW: PLAY_BUFFERED_MIC_AUDIO, DISCARD_BUFFERED_MIC_AUDIO,
+// SAVE_BUFFERED_MIC_AUDIO.
+// SW → offscreen: OFFSCREEN_PLAY_MIC_BUFFER, OFFSCREEN_DISCARD_MIC_BUFFER,
+// OFFSCREEN_SAVE_MIC_BUFFER.
+// The renamed pairs prevent the SW and offscreen from racing on the same
+// runtime broadcast (commit 0cad75c / df49756 lineage).
+
+describe("mic post-playback flow", () => {
+  test("PLAY_BUFFERED_MIC_AUDIO forwards OFFSCREEN_PLAY_MIC_BUFFER and returns offscreen response", async () => {
+    const env = loadServiceWorker();
+    env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true, count: 4 });
+    const resp = await env.sendMsgAsync({ type: "PLAY_BUFFERED_MIC_AUDIO" });
+    expect(env.chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "OFFSCREEN_PLAY_MIC_BUFFER" })
+    );
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: true, count: 4 }));
+  });
+
+  test("DISCARD_BUFFERED_MIC_AUDIO forwards OFFSCREEN_DISCARD_MIC_BUFFER", async () => {
+    const env = loadServiceWorker();
+    env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true });
+    await env.sendMsgAsync({ type: "DISCARD_BUFFERED_MIC_AUDIO" });
+    expect(env.chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "OFFSCREEN_DISCARD_MIC_BUFFER" })
+    );
+  });
+
+  test("SAVE_BUFFERED_MIC_AUDIO forwards OFFSCREEN_SAVE_MIC_BUFFER and returns wavBytes", async () => {
+    const env = loadServiceWorker();
+    const fakeWav = new ArrayBuffer(128);
+    env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true, wavBytes: fakeWav });
+    const resp = await env.sendMsgAsync({ type: "SAVE_BUFFERED_MIC_AUDIO" });
+    expect(env.chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "OFFSCREEN_SAVE_MIC_BUFFER" })
+    );
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: true, wavBytes: fakeWav }));
+  });
+
+  test("forwarders return async (listener returns true)", () => {
+    const env = loadServiceWorker();
+    expect(env.sendMsg({ type: "PLAY_BUFFERED_MIC_AUDIO" }).isAsync).toBe(true);
+    expect(env.sendMsg({ type: "DISCARD_BUFFERED_MIC_AUDIO" }).isAsync).toBe(true);
+    expect(env.sendMsg({ type: "SAVE_BUFFERED_MIC_AUDIO" }).isAsync).toBe(true);
+  });
+
+  test("offscreen failure does not surface as throw — caller gets ok:false", async () => {
+    const env = loadServiceWorker();
+    env.chrome.runtime.sendMessage.mockImplementationOnce(() => Promise.reject(new Error("offscreen gone")));
+    const resp = await env.sendMsgAsync({ type: "PLAY_BUFFERED_MIC_AUDIO" });
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+  });
+
+  test.each(["MIC_PLAYBACK_DONE", "MIC_PLAYBACK_CHUNK", "MIC_BUFFER_COUNT"])(
+    "%s from offscreen is rebroadcast to the side panel",
+    (type) => {
+      const env = loadServiceWorker();
+      env.chrome.runtime.sendMessage.mockClear();
+      env.sendMsg({ type, seq: 3, count: 2 });
+      expect(env.chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type })
+      );
+    }
+  );
 });
 
 // ===================================================================

@@ -381,7 +381,18 @@ function __readState() {
   __test.inReplayZone = inReplayZone;
   __test.pendingCaptions = pendingCaptions;
   __test.scheduledAudioTimes = scheduledAudioTimes;
+  __test.micBufferedItems = micBufferedItems;
+  __test.currentSourceMode = currentSourceMode;
+  __test.playingBufferedMic = _playingBufferedMic;
+  __test.playbackToken = _playbackToken;
 }
+// Test-only helpers for mic-playback flow: lets tests push items onto
+// micBufferedItems and invoke the playback functions without spinning up
+// the whole capture pipeline.
+function __pushMicItem(item) { micBufferedItems.push(item); }
+function __setSourceMode(mode) { currentSourceMode = mode; }
+function __startMicBufferedPlayback() { return startMicBufferedPlayback(); }
+function __encodeMicBufferAsWav() { return encodeMicBufferAsWav(); }
 `;
 
   const sandbox = {

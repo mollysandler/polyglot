@@ -451,9 +451,9 @@ describe("BUG-008: Service worker cleans up on tab close/nav (FIXED)", () => {
     env.chrome._simulateTabRemoved(42);
     await flushPromises();
 
-    // stopCapture sends STOP_CAPTURE via runtime.sendMessage
+    // handleStopCapture forwards OFFSCREEN_STOP to the offscreen doc.
     expect(env.chrome.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "STOP_CAPTURE" })
+      expect.objectContaining({ type: "OFFSCREEN_STOP" })
     );
   });
 
@@ -467,7 +467,7 @@ describe("BUG-008: Service worker cleans up on tab close/nav (FIXED)", () => {
     await flushPromises();
 
     expect(env.chrome.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "STOP_CAPTURE" })
+      expect.objectContaining({ type: "OFFSCREEN_STOP" })
     );
   });
 
@@ -481,7 +481,7 @@ describe("BUG-008: Service worker cleans up on tab close/nav (FIXED)", () => {
     await flushPromises();
 
     expect(env.chrome.runtime.sendMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "STOP_CAPTURE" })
+      expect.objectContaining({ type: "OFFSCREEN_STOP" })
     );
   });
 });

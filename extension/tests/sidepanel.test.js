@@ -26,10 +26,16 @@ function createSidepanelDOM() {
   const ids = [
     "startStopBtn", "statusBadge", "captions", "emptyState",
     "silenceWarning", "warmingUp", "warmingText", "elapsedTimer",
-    "sourceLang", "targetLang", "syncBadge",
+    "sourceLang", "targetLang",
     "errorBanner", "errorMessage", "retryBtn", "dismissBtn",
     "pauseResumeBtn", "newVideoBtn",
     "backendUrl", "saveBackendBtn", "resetBackendBtn", "backendStatus",
+    "sourceModeTab", "sourceModeMic", "micHint",
+    // Mic-mode pre/post-playback flow (introduced in 8f2f380/e486262/abef7b3)
+    "micReplayPrompt", "micReplayCount", "playMicAudioBtn", "discardMicAudioBtn",
+    "micPostPlaybackPrompt", "micPostPlaybackStatus",
+    "saveMicAudioBtn", "replayMicAudioBtn", "newMicRecordingBtn",
+    "micBufferLive", "micBufferLiveCount",
   ];
   for (const id of ids) {
     els[id] = createMockElement(id === "sourceLang" || id === "targetLang" ? "select" : "div");
@@ -38,6 +44,10 @@ function createSidepanelDOM() {
   els.sourceLang.value = "en";
   els.targetLang.value = "es";
   els.backendUrl.value = "";
+  // Mic replay prompt is `class="... hidden"` in the real HTML; reflect that
+  // so STATUS:idle reset logic (which short-circuits when the prompt is up)
+  // exercises the reset path by default.
+  els.micReplayPrompt.classList.add("hidden");
 
   return els;
 }
@@ -96,6 +106,14 @@ function loadSidepanel(opts = {}) {
     clickDismiss() {
       const listener = els.dismissBtn._listeners.click;
       if (listener && listener.length) listener[0]();
+    },
+    async clickEl(id) {
+      const el = els[id];
+      const fns = el && el._listeners && el._listeners.click;
+      if (fns && fns.length) {
+        const ret = fns[0]();
+        if (ret && typeof ret.then === "function") await ret;
+      }
     },
     startPlayback() {
       chrome._simulateMessage({ type: "HIDE_OVERLAY" }, {});
@@ -243,7 +261,7 @@ describe("start/stop", () => {
     expect(env.els.startStopBtn.disabled).toBe(false);
   });
 
-  test("stop hides sync badge and warming-up", async () => {
+  test("stop hides warming-up", async () => {
     const env = loadSidepanel();
     env.chrome.runtime.sendMessage.mockResolvedValueOnce({ ok: true });
     env.clickStart();
@@ -251,7 +269,6 @@ describe("start/stop", () => {
     env.clickStart();
     await flushPromises();
     expect(env.els.warmingUp.classList._set.has("hidden")).toBe(true);
-    expect(env.els.syncBadge.className).toContain("hidden");
   });
 });
 
@@ -593,26 +610,128 @@ describe("message handling", () => {
     expect(env.els.statusBadge.className).toContain("streaming");
   });
 
-  test("VIDEO_SYNC_STATUS synced — shows buffer + rate", () => {
+  // VIDEO_SYNC_STATUS used to drive a #syncBadge element in the side panel.
+  // That element was removed; the message is still emitted by offscreen.js
+  // (and asserted in bug-proofs.test.js as a regression guard against
+  // BUG-015), but the side panel no longer renders it. Tests for the
+  // removed badge intentionally omitted.
+});
+
+// ===================================================================
+// Mic-mode post-playback flow (Play again / Save / New recording)
+// ===================================================================
+//
+// After mic-mode capture finishes and the user opts to Play back the
+// buffered translation, offscreen emits MIC_PLAYBACK_CHUNK per chunk and
+// MIC_PLAYBACK_DONE when the last chunk's setTimeout fires. The side
+// panel surfaces a second prompt with Play-again / Save / New-recording
+// buttons. Tests below pin the wire-up to message types, since silent
+// regressions here only show up in real mic captures.
+
+describe("mic-mode post-playback flow", () => {
+  test("MIC_PLAYBACK_DONE shows the post-playback prompt and hides Start", () => {
     const env = loadSidepanel();
-    env.sendMsg({ type: "VIDEO_SYNC_STATUS", synced: true, bufferAheadMs: 2500, videoRate: 1.0 });
-    expect(env.els.syncBadge.textContent).toContain("Synced");
-    expect(env.els.syncBadge.textContent).toContain("2.5");
-    expect(env.els.syncBadge.className).toContain("synced");
+    env.sendMsg({ type: "MIC_PLAYBACK_DONE" });
+    expect(env.els.micPostPlaybackPrompt.classList._set.has("hidden")).toBe(false);
+    expect(env.els.startStopBtn.classList._set.has("hidden")).toBe(true);
+    // Buttons are re-enabled so the user can replay/save/restart.
+    expect(env.els.replayMicAudioBtn.disabled).toBe(false);
+    expect(env.els.saveMicAudioBtn.disabled).toBe(false);
+    expect(env.els.newMicRecordingBtn.disabled).toBe(false);
   });
 
-  test("VIDEO_SYNC_STATUS drifting — shows low buffer", () => {
+  test("MIC_PLAYBACK_CHUNK with a numeric seq queries for the matching caption", () => {
     const env = loadSidepanel();
-    env.sendMsg({ type: "VIDEO_SYNC_STATUS", synced: false, bufferAheadMs: 500, videoRate: 0.95 });
-    expect(env.els.syncBadge.textContent).toContain("Low buffer");
-    expect(env.els.syncBadge.className).toContain("drifting");
+    env.els.captions.querySelector.mockClear();
+    env.sendMsg({ type: "MIC_PLAYBACK_CHUNK", seq: 7 });
+    // The handler must scope the seq lookup to the captions container.
+    expect(env.els.captions.querySelector).toHaveBeenCalledWith(
+      expect.stringContaining('data-seq="7"')
+    );
   });
 
-  test("VIDEO_SYNC_STATUS buffering — shows buffering text", () => {
+  test("MIC_PLAYBACK_CHUNK with no seq is a safe no-op", () => {
     const env = loadSidepanel();
-    env.sendMsg({ type: "VIDEO_SYNC_STATUS", status: "buffering" });
-    expect(env.els.syncBadge.textContent).toContain("Buffering");
-    expect(env.els.syncBadge.className).toContain("waiting");
+    env.els.captions.querySelector.mockClear();
+    expect(() => env.sendMsg({ type: "MIC_PLAYBACK_CHUNK" })).not.toThrow();
+    expect(env.els.captions.querySelector).not.toHaveBeenCalled();
+  });
+
+  test("MIC_BUFFER_COUNT updates the live count element", () => {
+    const env = loadSidepanel();
+    env.sendMsg({ type: "MIC_BUFFER_COUNT", count: 12 });
+    expect(env.els.micBufferLiveCount.textContent).toBe("12");
+  });
+
+  test("Play (initial replay prompt) sends PLAY_BUFFERED_MIC_AUDIO", async () => {
+    const env = loadSidepanel();
+    env.chrome.runtime.sendMessage.mockClear();
+    await env.clickEl("playMicAudioBtn");
+    expect(env.sentMessages()).toContainEqual(
+      expect.objectContaining({ type: "PLAY_BUFFERED_MIC_AUDIO" })
+    );
+    // Both Play and Discard get disabled so the user can't double-trigger.
+    expect(env.els.playMicAudioBtn.disabled).toBe(true);
+    expect(env.els.discardMicAudioBtn.disabled).toBe(true);
+  });
+
+  test("Discard (initial replay prompt) sends DISCARD_BUFFERED_MIC_AUDIO and hides the prompt", async () => {
+    const env = loadSidepanel();
+    env.els.micReplayPrompt.classList.remove("hidden");
+    env.chrome.runtime.sendMessage.mockClear();
+    await env.clickEl("discardMicAudioBtn");
+    expect(env.sentMessages()).toContainEqual(
+      expect.objectContaining({ type: "DISCARD_BUFFERED_MIC_AUDIO" })
+    );
+    expect(env.els.micReplayPrompt.classList._set.has("hidden")).toBe(true);
+    expect(env.els.startStopBtn.classList._set.has("hidden")).toBe(false);
+  });
+
+  test("Play again (post-playback) sends PLAY_BUFFERED_MIC_AUDIO and sets status streaming", async () => {
+    const env = loadSidepanel();
+    env.chrome.runtime.sendMessage.mockClear();
+    await env.clickEl("replayMicAudioBtn");
+    expect(env.sentMessages()).toContainEqual(
+      expect.objectContaining({ type: "PLAY_BUFFERED_MIC_AUDIO" })
+    );
+    expect(env.els.statusBadge.className).toContain("streaming");
+  });
+
+  test("Save audio (post-playback) sends SAVE_BUFFERED_MIC_AUDIO and reports empty buffer cleanly", async () => {
+    const env = loadSidepanel();
+    // Default chrome.runtime.sendMessage mock resolves to undefined, so the
+    // handler takes the early-return 'nothing to save' branch.
+    env.chrome.runtime.sendMessage.mockClear();
+    await env.clickEl("saveMicAudioBtn");
+    expect(env.sentMessages()).toContainEqual(
+      expect.objectContaining({ type: "SAVE_BUFFERED_MIC_AUDIO" })
+    );
+    expect(env.els.micPostPlaybackStatus.textContent).toContain("nothing to save");
+  });
+
+  test("New recording (post-playback) sends DISCARD_BUFFERED_MIC_AUDIO and hides the prompt", async () => {
+    const env = loadSidepanel();
+    env.els.micPostPlaybackPrompt.classList.remove("hidden");
+    env.chrome.runtime.sendMessage.mockClear();
+    await env.clickEl("newMicRecordingBtn");
+    expect(env.sentMessages()).toContainEqual(
+      expect.objectContaining({ type: "DISCARD_BUFFERED_MIC_AUDIO" })
+    );
+    expect(env.els.micPostPlaybackPrompt.classList._set.has("hidden")).toBe(true);
+    expect(env.els.startStopBtn.classList._set.has("hidden")).toBe(false);
+  });
+
+  test("STATUS:idle does not reset the UI while the replay prompt is up", () => {
+    // Guard: when offscreen's drainQueue sends STATUS:idle but the user
+    // still has buffered mic audio waiting to play, the side panel must
+    // NOT wipe its replay prompt — otherwise the buffer becomes
+    // unreachable (the failure mode that motivated this branch).
+    const env = loadSidepanel();
+    env.els.micReplayPrompt.classList.remove("hidden");
+    env.els.startStopBtn.classList.add("hidden");
+    env.sendMsg({ type: "STATUS", status: "idle" });
+    expect(env.els.micReplayPrompt.classList._set.has("hidden")).toBe(false);
+    expect(env.els.startStopBtn.classList._set.has("hidden")).toBe(true);
   });
 });
 

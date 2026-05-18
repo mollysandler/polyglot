@@ -184,8 +184,8 @@ No shared credentials, no shared bill — each user owns their deployment outrig
 ## Tests
 
 ```bash
-cd server   && pytest tests/ -q       # 79 backend tests
-cd extension && npm test              # 410 extension tests
+cd server   && pytest tests/ -q       # 122 backend tests
+cd extension && npm test              # 438 extension tests
 ```
 
 ## Project notes

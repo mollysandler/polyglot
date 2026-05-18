@@ -337,11 +337,16 @@ describe("seekback mode", () => {
     expect(env.video.playbackRate).toBe(0.95);
   });
 
-  test("VIDEO_ADJUST_RATE ignored in canvas mode", () => {
+  test("VIDEO_ADJUST_RATE applies in canvas mode (drift correction)", () => {
+    // Canvas mode applies playbackRate too — the offscreen drift monitor
+    // uses it to slow the underlying <video> when translated audio falls
+    // behind. The 'ratechange' clamp (BUG-009) only kicks in when a third
+    // party (keyboard shortcut, player UI) sets a rate that doesn't match
+    // _extensionDesiredRate.
     const env = loadContentScript(); // no DRM → canvas mode
     env.sendMsg({ type: "START_SYNC" });
-    env.sendMsg({ type: "VIDEO_ADJUST_RATE", rate: 0.5 });
-    expect(env.video.playbackRate).toBe(1.0); // unchanged
+    env.sendMsg({ type: "VIDEO_ADJUST_RATE", rate: 0.95 });
+    expect(env.video.playbackRate).toBe(0.95);
   });
 });
 

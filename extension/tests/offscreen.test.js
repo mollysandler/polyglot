@@ -243,7 +243,7 @@ describe("capture lifecycle", () => {
     const env = createEnv();
     await env.startCapture();
     env.openWS();
-    env.sendMsg({ type: "STOP_CAPTURE" });
+    env.sendMsg({ type: "OFFSCREEN_STOP" });
     const ws = env.getWS();
     const endMsg = ws.send.mock.calls.find((c) => typeof c[0] === "string" && c[0].includes("end_stream"));
     expect(endMsg).toBeTruthy();
@@ -255,7 +255,7 @@ describe("capture lifecycle", () => {
     await env.startCapture();
     env.openWS();
     env.chrome.runtime.sendMessage.mockClear();
-    env.sendMsg({ type: "STOP_CAPTURE" });
+    env.sendMsg({ type: "OFFSCREEN_STOP" });
     const msgs = env.sentMessages();
     expect(msgs).toContainEqual(expect.objectContaining({ type: "HIDE_OVERLAY" }));
     expect(msgs).toContainEqual(expect.objectContaining({ type: "STATUS", status: "idle" }));
@@ -265,9 +265,9 @@ describe("capture lifecycle", () => {
     const env = createEnv();
     await env.startCapture();
     env.openWS();
-    env.sendMsg({ type: "STOP_CAPTURE" });
+    env.sendMsg({ type: "OFFSCREEN_STOP" });
     env.chrome.runtime.sendMessage.mockClear();
-    expect(() => env.sendMsg({ type: "STOP_CAPTURE" })).not.toThrow();
+    expect(() => env.sendMsg({ type: "OFFSCREEN_STOP" })).not.toThrow();
   });
 });
 
@@ -1012,5 +1012,166 @@ describe("SYNC_MODE_REPORT", () => {
     await env.startCapture();
     env.sendMsg({ type: "SYNC_MODE_REPORT" });
     expect(env.getState().syncMode).toBe("canvas");
+  });
+});
+
+// ===================================================================
+// Mic-mode post-playback flow
+// ===================================================================
+//
+// In mic mode, drainQueue() preserves chunks in micBufferedItems so the
+// user can Play / Save / Discard them after recording ends. The
+// OFFSCREEN_* message handlers expose this state to the side panel.
+
+describe("mic post-playback message handlers", () => {
+  function pushItems(env, n, opts = {}) {
+    const sr = opts.sampleRate || 44100;
+    const len = opts.length || 4410; // 0.1s per chunk
+    for (let i = 0; i < n; i++) {
+      env.ctx.__pushMicItem({
+        seq: i,
+        audioBuffer: createMockAudioBuffer({ length: len, sampleRate: sr }),
+      });
+    }
+  }
+
+  test("OFFSCREEN_PLAY_MIC_BUFFER returns the current buffered chunk count", () => {
+    const env = createEnv();
+    pushItems(env, 3);
+    const resp = env.sendMsg({ type: "OFFSCREEN_PLAY_MIC_BUFFER" });
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: true, count: 3 }));
+  });
+
+  test("OFFSCREEN_DISCARD_MIC_BUFFER clears the buffer and bumps the playback token", () => {
+    const env = createEnv();
+    pushItems(env, 2);
+    const tokenBefore = env.getState().playbackToken;
+    const resp = env.sendMsg({ type: "OFFSCREEN_DISCARD_MIC_BUFFER" });
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+    const state = env.getState();
+    expect(state.micBufferedItems.length).toBe(0);
+    expect(state.playbackToken).toBe(tokenBefore + 1);
+    expect(state.playingBufferedMic).toBe(false);
+  });
+
+  test("OFFSCREEN_SAVE_MIC_BUFFER returns wavBytes with a valid RIFF/WAVE header", () => {
+    const env = createEnv();
+    pushItems(env, 2, { sampleRate: 16000, length: 1600 });
+    const resp = env.sendMsg({ type: "OFFSCREEN_SAVE_MIC_BUFFER" });
+    const call = resp.mock.calls[0][0];
+    expect(call.ok).toBe(true);
+    expect(call.wavBytes).toBeTruthy();
+    // 44-byte header + 2 chunks × 1600 samples × 2 bytes (16-bit PCM mono)
+    expect(call.wavBytes.byteLength).toBe(44 + 2 * 1600 * 2);
+    const view = new DataView(call.wavBytes);
+    const tag = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    expect(tag).toBe("RIFF");
+    const fmt = String.fromCharCode(view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11));
+    expect(fmt).toBe("WAVE");
+    // Sample rate at byte 24, little-endian uint32.
+    expect(view.getUint32(24, true)).toBe(16000);
+  });
+
+  test("OFFSCREEN_SAVE_MIC_BUFFER returns null wavBytes when the buffer is empty", () => {
+    const env = createEnv();
+    const resp = env.sendMsg({ type: "OFFSCREEN_SAVE_MIC_BUFFER" });
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: true, wavBytes: null }));
+  });
+
+  test("OFFSCREEN_PLAY_MIC_BUFFER on empty buffer is a no-op (count 0, no playback context)", () => {
+    const env = createEnv();
+    const resp = env.sendMsg({ type: "OFFSCREEN_PLAY_MIC_BUFFER" });
+    expect(resp).toHaveBeenCalledWith(expect.objectContaining({ ok: true, count: 0 }));
+    expect(env.getState().playingBufferedMic).toBe(false);
+  });
+});
+
+describe("encodeMicBufferAsWav (WAV format guarantees)", () => {
+  test("byte-rate header matches sampleRate × numChannels × bytesPerSample", () => {
+    const env = createEnv();
+    const sr = 22050;
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1024, sampleRate: sr }) });
+    const wav = env.ctx.__encodeMicBufferAsWav();
+    const view = new DataView(wav);
+    expect(view.getUint32(28, true)).toBe(sr * 1 * 2); // mono, 16-bit
+    expect(view.getUint16(22, true)).toBe(1); // numChannels
+    expect(view.getUint16(34, true)).toBe(16); // bitsPerSample
+  });
+
+  test("skips items with mismatched sample rates (defensive)", () => {
+    const env = createEnv();
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1000, sampleRate: 16000 }) });
+    env.ctx.__pushMicItem({ seq: 1, audioBuffer: createMockAudioBuffer({ length: 1000, sampleRate: 22050 }) });
+    const wav = env.ctx.__encodeMicBufferAsWav();
+    // Only the first (matching) item should be encoded.
+    expect(wav.byteLength).toBe(44 + 1000 * 2);
+  });
+
+  test("returns null when the first item has no audioBuffer", () => {
+    const env = createEnv();
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: null });
+    expect(env.ctx.__encodeMicBufferAsWav()).toBeNull();
+  });
+});
+
+describe("mic playback token cancellation (highlight broadcasts)", () => {
+  test("startMicBufferedPlayback bumps the token so stale DONE callbacks are dropped", () => {
+    const env = createEnv();
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1024, sampleRate: 16000 }) });
+    const before = env.getState().playbackToken;
+    env.ctx.__startMicBufferedPlayback();
+    expect(env.getState().playbackToken).toBe(before + 1);
+    expect(env.getState().playingBufferedMic).toBe(true);
+  });
+
+  test("a Discard between two Plays bumps the token twice so the first run's DONE is suppressed", () => {
+    // Reproduces the regression fixed in 83389b7: the playback token must
+    // be bumped BEFORE scheduling chunk broadcasts, so any in-flight DONE
+    // setTimeout from a previous Play sees a token mismatch and exits.
+    const env = createEnv();
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1024, sampleRate: 16000 }) });
+    const start = env.getState().playbackToken;
+    env.ctx.__startMicBufferedPlayback();           // bump 1
+    env.sendMsg({ type: "OFFSCREEN_DISCARD_MIC_BUFFER" }); // bump 2 + clear
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1024, sampleRate: 16000 }) });
+    env.ctx.__startMicBufferedPlayback();           // bump 3
+    expect(env.getState().playbackToken).toBe(start + 3);
+  });
+});
+
+describe("mic source-mode branching on stop", () => {
+  test("stop in mic mode preserves buffered items (so user can Play / Save)", async () => {
+    const env = createEnv();
+    await env.startCapture("en", "es");
+    env.ctx.__setSourceMode("mic");
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1024, sampleRate: 16000 }) });
+    env.openWS();
+    env.sendMsg({ type: "OFFSCREEN_STOP" });
+    expect(env.getState().micBufferedItems.length).toBe(1);
+  });
+
+  test("stop in mic mode WITH buffered items skips STATUS:idle (replay prompt owns the UI)", async () => {
+    const env = createEnv();
+    await env.startCapture();
+    env.ctx.__setSourceMode("mic");
+    env.ctx.__pushMicItem({ seq: 0, audioBuffer: createMockAudioBuffer({ length: 1024, sampleRate: 16000 }) });
+    env.openWS();
+    env.chrome.runtime.sendMessage.mockClear();
+    env.sendMsg({ type: "OFFSCREEN_STOP" });
+    const msgs = env.sentMessages();
+    expect(msgs).not.toContainEqual(expect.objectContaining({ type: "STATUS", status: "idle" }));
+    expect(msgs).toContainEqual(expect.objectContaining({ type: "HIDE_OVERLAY" }));
+  });
+
+  test("stop in tab mode always sends STATUS:idle", async () => {
+    const env = createEnv();
+    await env.startCapture();
+    // currentSourceMode defaults to "tab" after startCapture without sourceMode
+    env.openWS();
+    env.chrome.runtime.sendMessage.mockClear();
+    env.sendMsg({ type: "OFFSCREEN_STOP" });
+    expect(env.sentMessages()).toContainEqual(
+      expect.objectContaining({ type: "STATUS", status: "idle" })
+    );
   });
 });

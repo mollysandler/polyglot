@@ -456,11 +456,15 @@ describe("Netflix seekback mode — content script", () => {
       expect(env.video.playbackRate).toBe(0.95);
     });
 
-    test("rate adjustment ignored in canvas mode (not seekback)", () => {
+    test("rate adjustment applies in canvas mode (drift correction)", () => {
+      // Canvas mode honors VIDEO_ADJUST_RATE so the offscreen drift monitor
+      // can slow the <video> when translated audio falls behind. The clamp
+      // tested in BUG-009 only fires for third-party rate changes that
+      // don't match _extensionDesiredRate.
       const env = loadContentScript({ drm: false, videoOpts: { mediaKeys: null } });
       env.sendMsg({ type: "START_SYNC" });
-      env.sendMsg({ type: "VIDEO_ADJUST_RATE", rate: 0.5 });
-      expect(env.video.playbackRate).toBe(1.0);
+      env.sendMsg({ type: "VIDEO_ADJUST_RATE", rate: 0.95 });
+      expect(env.video.playbackRate).toBe(0.95);
     });
   });
 
