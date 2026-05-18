@@ -41,63 +41,6 @@ def estimate_pitch_yin(y: np.ndarray, sr: int) -> Optional[float]:
     return float(np.median(pitches))
 
 
-def find_silence_split(
-    samples: np.ndarray,
-    sr: int,
-    min_chunk_samples: int,
-    max_chunk_samples: int,
-    window_ms: int = 30,
-    consecutive: int = 4,
-    rms_threshold: float = 0.02,
-) -> int:
-    """Scan backwards from max_chunk_samples toward min_chunk_samples looking
-    for consecutive low-energy windows (~120ms of silence).
-
-    Two-pass approach:
-      1. Strict: find ``consecutive`` windows all below ``rms_threshold``.
-      2. Fallback: if no strict silence found, return the position of the
-         lowest-energy window in the scan range (the "least bad" split).
-
-    Returns the sample index of the split point.  Only returns -1 if the
-    buffer is shorter than min_chunk_samples.
-    """
-    window_samples = int(sr * window_ms / 1000)
-    end = min(len(samples), max_chunk_samples)
-    scan_start = min_chunk_samples
-
-    if end - window_samples * consecutive < scan_start:
-        return -1
-
-    # Pre-compute RMS for every window in the scan range to avoid redundant work
-    first_window_pos = scan_start
-    last_window_pos = end - window_samples
-    n_windows = (last_window_pos - first_window_pos) // window_samples + 1
-    if n_windows <= 0:
-        return -1
-
-    rms_values = np.empty(n_windows, dtype=np.float32)
-    for i in range(n_windows):
-        w_start = first_window_pos + i * window_samples
-        w_end = w_start + window_samples
-        window = samples[w_start:w_end]
-        rms_values[i] = float(np.sqrt(np.mean(window ** 2)))
-
-    # Pass 1: scan backwards for `consecutive` windows all below threshold
-    for i in range(n_windows - consecutive, -1, -1):
-        if np.all(rms_values[i:i + consecutive] < rms_threshold):
-            return first_window_pos + i * window_samples
-
-    # Pass 2: find the quietest single window (least-bad split point)
-    # Use a sliding average over `consecutive` windows for smoother selection
-    if n_windows >= consecutive:
-        avg_rms = np.convolve(rms_values, np.ones(consecutive) / consecutive, mode='valid')
-        best_i = int(np.argmin(avg_rms))
-        return first_window_pos + best_i * window_samples
-    else:
-        best_i = int(np.argmin(rms_values))
-        return first_window_pos + best_i * window_samples
-
-
 def gender_from_pitch(pitch_hz: Optional[float], pitch_range_hz: Optional[float] = None) -> str:
     """Very simple heuristic used only for choosing a pleasant stock voice."""
     if pitch_hz is None:
