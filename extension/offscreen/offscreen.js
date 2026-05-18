@@ -513,6 +513,7 @@ function handleTextMessage(data) {
       if (translated && !rememberCaption(translated)) break;
 
       const caption = {
+        seq: data.seq,
         speaker: `Speaker ${data.speaker_id}`,
         original: data.original,
         translated,
@@ -950,6 +951,18 @@ function scheduleAudioItem(item) {
   source.start(nextPlayTime);
   emitSyncStatusIfDue();
   maybeApplyDriftCorrection(item);
+
+  // During mic replay, tell the side panel which chunk is currently audible
+  // so it can highlight the matching caption. Use _playbackToken so a stale
+  // setTimeout from a previous (now-cancelled) replay doesn't fire.
+  if (_playingBufferedMic && item.seq !== undefined) {
+    const startDelayMs = Math.max(0, (nextPlayTime - playbackCtx.currentTime) * 1000);
+    const token = _playbackToken;
+    setTimeout(() => {
+      if (token !== _playbackToken) return;
+      sendToSW({ type: "MIC_PLAYBACK_CHUNK", seq: item.seq });
+    }, startDelayMs);
+  }
   const caption = pendingCaptions.get(item.seq);
   if (caption) {
     const delayMs = Math.max(0, (nextPlayTime - playbackCtx.currentTime) * 1000);

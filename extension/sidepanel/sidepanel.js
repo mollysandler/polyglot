@@ -213,6 +213,8 @@ function resetUIToIdle() {
   silenceWarning.classList.add("hidden");
   micReplayPromptEl.classList.add("hidden");
   if (micPostPlaybackPromptEl) micPostPlaybackPromptEl.classList.add("hidden");
+  clearChunkHighlight();
+  resetPlayButtonLabels();
   if (micBufferLiveEl) micBufferLiveEl.classList.add("hidden");
   if (playMicAudioBtn) playMicAudioBtn.disabled = false;
   if (discardMicAudioBtn) discardMicAudioBtn.disabled = false;
@@ -379,8 +381,6 @@ function showMicReplayPrompt(count) {
 
 function hideMicReplayPrompt() {
   micReplayPromptEl.classList.add("hidden");
-  // We don't always want to reveal startStopBtn here — the post-playback
-  // prompt also wants the start button hidden until the user clicks Restart.
 }
 
 function showMicPostPlaybackPrompt() {
@@ -394,6 +394,28 @@ function showMicPostPlaybackPrompt() {
   setStatus("idle");
 }
 
+function highlightChunkBySeq(seq) {
+  if (seq === undefined || seq === null) return;
+  const target = captionsEl.querySelector(`.caption-item[data-seq="${seq}"]`);
+  // Clear previous highlight first.
+  captionsEl.querySelectorAll(".caption-item.playing").forEach((el) => {
+    if (el !== target) el.classList.remove("playing");
+  });
+  if (target) {
+    target.classList.add("playing");
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function clearChunkHighlight() {
+  captionsEl.querySelectorAll(".caption-item.playing").forEach((el) => el.classList.remove("playing"));
+}
+
+function resetPlayButtonLabels() {
+  playMicAudioBtn.textContent = "Play";
+  replayMicAudioBtn.textContent = "Play again";
+}
+
 function hideMicPostPlaybackPrompt() {
   micPostPlaybackPromptEl.classList.add("hidden");
   startStopBtn.classList.remove("hidden");
@@ -402,6 +424,7 @@ function hideMicPostPlaybackPrompt() {
 playMicAudioBtn.addEventListener("click", async () => {
   playMicAudioBtn.disabled = true;
   discardMicAudioBtn.disabled = true;
+  playMicAudioBtn.textContent = "Playing…";
   setStatus("streaming");
   try {
     await chrome.runtime.sendMessage({ type: "PLAY_BUFFERED_MIC_AUDIO" });
@@ -409,6 +432,7 @@ playMicAudioBtn.addEventListener("click", async () => {
     showError("Could not start playback: " + (err.message || err));
     playMicAudioBtn.disabled = false;
     discardMicAudioBtn.disabled = false;
+    playMicAudioBtn.textContent = "Play";
   }
 });
 
@@ -436,10 +460,16 @@ saveMicAudioBtn.addEventListener("click", async () => {
     }
     const blob = new Blob([resp.wavBytes], { type: "audio/wav" });
     const url = URL.createObjectURL(blob);
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    // Human-readable filename: "Polyglot EN to HI 2026-05-17 14h30.wav"
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const timeStr = `${pad(now.getHours())}h${pad(now.getMinutes())}`;
+    const src = (sourceLangEl.value || "").toUpperCase();
+    const tgt = (targetLangEl.value || "").toUpperCase();
     const a = document.createElement("a");
     a.href = url;
-    a.download = `polyglot-${stamp}.wav`;
+    a.download = `Polyglot ${src} to ${tgt} ${dateStr} ${timeStr}.wav`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -454,15 +484,15 @@ saveMicAudioBtn.addEventListener("click", async () => {
 
 replayMicAudioBtn.addEventListener("click", async () => {
   replayMicAudioBtn.disabled = true;
-  micPostPlaybackStatusEl.textContent = "Playing…";
+  replayMicAudioBtn.textContent = "Playing…";
+  micPostPlaybackStatusEl.textContent = "";
   setStatus("streaming");
   try {
     await chrome.runtime.sendMessage({ type: "PLAY_BUFFERED_MIC_AUDIO" });
-    // Re-enable + status reset happens when MIC_PLAYBACK_DONE arrives in the
-    // listener (which calls showMicPostPlaybackPrompt → enables the button).
   } catch (err) {
     micPostPlaybackStatusEl.textContent = "Replay failed: " + (err.message || err);
     replayMicAudioBtn.disabled = false;
+    replayMicAudioBtn.textContent = "Play again";
   }
 });
 
@@ -530,6 +560,9 @@ function renderCaptions() {
 
     const div = document.createElement("div");
     div.className = `caption-item speaker-${speakerIdx % 5}`;
+    if (cap.seq !== undefined && cap.seq !== null) {
+      div.dataset.seq = String(cap.seq);
+    }
 
     const speakerDiv = document.createElement("div");
     speakerDiv.className = "speaker";
@@ -566,11 +599,15 @@ function extractSpeakerIndex(speaker) {
 chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "MIC_PLAYBACK_DONE") {
-    // Don't reset to idle automatically — leave the buffer intact and show a
-    // Save / Restart prompt so the user can download the file or explicitly
-    // end the session.
+    clearChunkHighlight();
+    resetPlayButtonLabels();
     hideMicReplayPrompt();
     showMicPostPlaybackPrompt();
+    return;
+  }
+
+  if (message.type === "MIC_PLAYBACK_CHUNK") {
+    highlightChunkBySeq(message.seq);
     return;
   }
 

@@ -407,3 +407,17 @@ body {
   color: #94a3b8;
   margin-left: 4px;
 }
+
+/* Highlight the caption row whose audio chunk is currently playing during
+   mic-replay. Pulses gently to draw the eye without being garish. */
+.caption-item.playing {
+  background: #1e3a8a;
+  border-left-width: 5px;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.4);
+  animation: caption-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes caption-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35); }
+  50%      { box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.65); }
+}

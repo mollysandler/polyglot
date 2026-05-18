@@ -103,6 +103,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "MIC_PLAYBACK_DONE":
     case "MIC_BUFFER_COUNT":
+    case "MIC_PLAYBACK_CHUNK":
       broadcastToExtension(message);
       break;
 
