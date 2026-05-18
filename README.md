@@ -16,7 +16,7 @@ Two parts: a Chromium Manifest V3 extension that captures audio and runs the UI,
 
 **Tab audio (default).** Captures whatever is playing in the active Chromium tab. The tab is muted, and a frame-delayed canvas overlay keeps the picture in step with the translated dub. Use this for livestreams, foreign-language video, lectures, and podcasts.
 
-**Microphone.** Captures your own voice. Translated audio is recorded silently during capture and offered for one-click playback when you click **Done**, so you can speak without the dub talking over you. Use this for short conversations across a language barrier or to produce translated voice memos.
+**Microphone.** Captures your own voice. Translated audio is recorded silently during capture (you'll see a live **Buffered: N chunks** count grow as you speak), then offered for playback when you click **Done**. You can play the buffered audio back, save it as a `.wav` file, or discard it and start a new recording. Use this for short conversations across a language barrier or to produce a translated, downloadable voice memo.
 
 ## Quick start
 
@@ -80,6 +80,11 @@ $EDITOR .env      # fill in DEEPGRAM_API_KEY, ELEVENLABS_API_KEY,
 ```
 
 `.env` lives at the repo root and is loaded by the backend at startup.
+
+Two optional flags are also recognized:
+
+- `TTS_PROVIDER` — defaults to `elevenlabs`. Other providers are stubbed in `tts_provider.py`.
+- `ENABLE_SPEAKER_CLUSTERING` — defaults to `1`. Set to `0` to use Deepgram's raw `speaker_id` and skip the ECAPA-TDNN re-clustering pass. Re-clustering requires `speechbrain` installed in your venv (`pip install speechbrain`); if it isn't, the server logs a warning at startup and silently falls back to Deepgram's IDs.
 
 ### 3. Run the backend
 
@@ -145,6 +150,14 @@ Chrome will prompt for microphone permission on first use. If the side panel can
 
 **Mic mode is silent during recording.** Live captions appear, but the translated dub does not play in real time — that would create a feedback loop. The Start/Stop button reads **Done** in mic mode; clicking it ends recording and offers a **Play / Discard** prompt for the buffered translated audio.
 
+**After playback finishes**, a second prompt offers three options:
+
+- **Play again** — replay the buffer (the matching caption row highlights as each chunk fires).
+- **Save audio** — download the buffered translation as a 16-bit PCM WAV, named `Polyglot <SRC> to <TGT> <date> <time>.wav`.
+- **New recording** — discard the buffer and return to the idle state.
+
+Play and Save are non-consumptive; the buffer stays in memory until you explicitly start a new recording.
+
 ---
 
 ## Optional: deploy your own Modal backend
@@ -162,7 +175,6 @@ modal token new
 #       ELEVENLABS_API_KEY
 #       GOOGLE_APPLICATION_CREDENTIALS_JSON   (paste the JSON contents itself,
 #                                              not a file path)
-#       HUGGING_FACE_TOKEN
 
 # 3. Deploy. Modal prints a URL on your subdomain.
 cd server
