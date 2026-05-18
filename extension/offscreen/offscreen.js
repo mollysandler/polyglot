@@ -821,6 +821,12 @@ function startMicBufferedPlayback() {
     playbackCtx = new AudioContext();
   }
   _playingBufferedMic = true;
+  // Bump the token BEFORE scheduling chunk broadcasts. The chunk-start
+  // setTimeouts (in scheduleAudioItem) and the DONE setTimeout below all
+  // capture this new value, so a single Discard / restart bumping the
+  // token cancels both kinds of pending notification at once.
+  const token = ++_playbackToken;
+
   nextPlayTime = playbackCtx.currentTime + 0.1;
   lastOriginalEndSec = 0;
   translationOverrun = 0;
@@ -834,10 +840,7 @@ function startMicBufferedPlayback() {
   }
   if (lastItem && lastItem.audioBuffer) {
     const totalDurationMs = (nextPlayTime - playbackCtx.currentTime) * 1000;
-    const token = ++_playbackToken;
     setTimeout(() => {
-      // Skip MIC_PLAYBACK_DONE if the playback was cancelled (Discard / new
-      // capture / restart bumped the token).
       if (token !== _playbackToken) return;
       _playingBufferedMic = false;
       sendToSW({ type: "MIC_PLAYBACK_DONE" });
